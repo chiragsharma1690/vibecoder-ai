@@ -64,27 +64,27 @@ class VibeCoderAgent:
         Include all necessary project files (HTML, JS, CSS, README, etc.) to complete the task.
         """
         
-        # response = self.client.models.generate_content(
-        #     model=os.getenv("LLM_MODEL"), 
-        #     contents=prompt
-        # ).text
+        response = self.client.models.generate_content(
+            model=os.getenv("LLM_MODEL"), 
+            contents=prompt
+        ).text
 
-        # # 4. Physical File Creation (Visible in VS Code)
-        # print("📝 Writing files to local disk...")
-        # parts = response.split("---FILE: ")
-        # for part in parts[1:]:
-        #     try:
-        #         path = part.split("---")[0].strip()
-        #         content = part.split("---")[1].split("---END---")[0].strip()
+        # 4. Physical File Creation (Visible in VS Code)
+        print("📝 Writing files to local disk...")
+        parts = response.split("---FILE: ")
+        for part in parts[1:]:
+            try:
+                path = part.split("---")[0].strip()
+                content = part.split("---")[1].split("---END---")[0].strip()
                 
-        #         # Create directories if they don't exist
-        #         os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
+                # Create directories if they don't exist
+                os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
                 
-        #         with open(path, "w") as f:
-        #             f.write(content)
-        #         print(f"   ✅ Created: {path}")
-        #     except Exception as e:
-        #         print(f"   ❌ Failed to write {path}: {e}")
+                with open(path, "w") as f:
+                    f.write(content)
+                print(f"   ✅ Created: {path}")
+            except Exception as e:
+                print(f"   ❌ Failed to write {path}: {e}")
 
         # 5. Git Push & PR
         print("🚀 Pushing to GitHub...")
