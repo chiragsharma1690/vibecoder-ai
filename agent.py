@@ -5,7 +5,6 @@ import ollama
 from jira import JIRA
 from dotenv import load_dotenv
 
-# Load credentials from .env
 load_dotenv()
 
 class VibeCoderAgent:
@@ -26,50 +25,41 @@ class VibeCoderAgent:
         self.branch_name = f"feat-{ticket_id.lower()}"
         self.remote_url = f"https://x-access-token:{self.token}@github.com/{self.repo_path}.git"
 
-    def run_shell(self, cmd):
-        """Execute terminal commands and return output."""
+    def run_shell(self, cmd, timeout=30):
+        """Execute terminal commands safely with a timeout for blocking processes."""
         print(f"💻 Running: {cmd[:60]}...") 
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if result.returncode != 0 and "already exists" not in result.stderr:
-            print(f"⚠️ Git/Shell Note: {result.stderr.strip()}")
-        return result.stdout.strip()
-
-    def execute(self):
-        # 1. Fetch Jira Context
-        print(f"🔍 Fetching Jira ticket {self.ticket_id}...")
         try:
-            issue = self.jira.issue(self.ticket_id)
-            context = f"Summary: {issue.fields.summary}\nDetails: {issue.fields.description}"
-        except Exception as e:
-            print(f"❌ Failed to fetch Jira ticket: {e}")
-            return
+            # We use timeout to kill processes like 'npm run dev' that run forever
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+            
+            if result.returncode != 0:
+                return False, result.stderr.strip()
+            return True, result.stdout.strip()
+            
+        except subprocess.TimeoutExpired:
+            print(f"⚠️ Command timed out after {timeout}s. (Expected if it's a dev server).")
+            return True, "Process timed out (likely a background server)."
 
-        # 2. Local Git Setup (Safe Branching)
-        print("🔄 Preparing git branch...")
-        self.run_shell("git checkout main")
-        self.run_shell("git pull origin main")
+    def get_repo_context(self):
+        """Scans the local directory to give the LLM structural context."""
+        ignore_dirs = {'.git', 'node_modules', '__pycache__', 'dist', 'build', '.venv'}
+        tree = []
         
-        # Safely create or switch to the branch
-        check_branch = self.run_shell(f"git rev-parse --verify {self.branch_name}")
-        if not check_branch:
-            self.run_shell(f"git checkout -b {self.branch_name}")
-        else:
-            self.run_shell(f"git checkout {self.branch_name}")
+        for root, dirs, files in os.walk("."):
+            dirs[:] = [d for d in dirs if d not in ignore_dirs]
+            level = root.replace(".", "").count(os.sep)
+            indent = " " * 4 * (level)
+            tree.append(f"{indent}{os.path.basename(root)}/")
+            subindent = " " * 4 * (level + 1)
+            for f in files:
+                tree.append(f"{subindent}{f}")
+                
+        # Limit to first 200 lines to prevent blowing up the context window on huge repos
+        return "\n".join(tree[:200])
 
-        # 3. AI Reasoning
-        print(f"🧠 Local LLM ({self.model_name}) is architecting...")
-        prompt = f"""
-        You are a Senior Software Engineer.
-        TASK: {context}
-        
-        Respond ONLY with a list of files to create/modify in this exact format:
-        ---FILE: path/to/file.ext---
-        content
-        ---END---
-        
-        Do not include markdown code blocks around the format. Just the tags.
-        """
-        
+    def generate_and_parse(self, prompt, attempt=1):
+        """Handles talking to Ollama and extracting files/commands."""
+        print(f"🧠 Local LLM is architecting (Attempt {attempt})...")
         try:
             response = ollama.generate(
                 model=self.model_name,
@@ -78,60 +68,143 @@ class VibeCoderAgent:
             )
             raw_text = response.get('response', '')
         except Exception as e:
-            print(f"❌ Ollama Error: {e}")
-            return
+            return None, [], f"Ollama Error: {e}"
 
-        if "---FILE:" not in raw_text:
-            print("❌ ERROR: LLM did not output the expected file format.")
-            print(f"Raw Output Snippet: {raw_text[:200]}...")
-            return
-
-        # 4. Physical File Creation & Verification
-        print("📝 Saving files to local disk...")
-        parts = raw_text.split("---FILE:")
+        # Parse Files
         verified_files = []
-
-        for part in parts[1:]:
-            try:
+        if "---FILE:" in raw_text:
+            parts = raw_text.split("---FILE:")
+            for part in parts[1:]:
                 if "---" not in part or "---END---" not in part:
                     continue
-                    
-                path_section = part.split("---")[0].strip()
-                # Clean the path of any accidental backticks or quotes
-                path = path_section.strip("`'\" \n")
-                
+                path = part.split("---")[0].strip().strip("`'\" \n")
                 content = part.split("---")[1].split("---END---")[0].strip()
                 
-                # Create directories
                 if os.path.dirname(path):
                     os.makedirs(os.path.dirname(path), exist_ok=True)
                 
-                # Write to disk
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(content)
                 
-                # HARD VERIFICATION: Does the file actually exist on disk now?
                 if os.path.exists(path):
-                    print(f"   ✅ Successfully saved to disk: {path}")
                     verified_files.append(path)
-                else:
-                    print(f"   ❌ File write silently failed for: {path}")
-                    
-            except Exception as e:
-                print(f"   ❌ Failed to parse/write file block: {e}")
 
-        # 5. Git Push (Guarded by Disk & Status Checks)
-        if not verified_files:
-            print("🛑 No files were verified on the local disk. Aborting Git push.")
+        # Parse Commands
+        commands_to_run = []
+        if "---CMD:" in raw_text:
+            cmd_parts = raw_text.split("---CMD:")
+            for part in cmd_parts[1:]:
+                clean_cmd = part.split("---")[0].strip().replace("`", "")
+                if clean_cmd:
+                    commands_to_run.append(clean_cmd)
+
+        return verified_files, commands_to_run, None
+
+    def execute(self):
+        # 1. Fetch Jira Context
+        print(f"🔍 Fetching Jira ticket {self.ticket_id}...")
+        try:
+            issue = self.jira.issue(self.ticket_id)
+            jira_context = f"Summary: {issue.fields.summary}\nDetails: {issue.fields.description}"
+        except Exception as e:
+            print(f"❌ Failed to fetch Jira ticket: {e}")
             return
 
+        # 2. Local Git Setup
+        print("🔄 Preparing git branch...")
+        self.run_shell("git checkout main")
+        self.run_shell("git pull origin main")
+        
+        success, check_branch = self.run_shell(f"git rev-parse --verify {self.branch_name}")
+        if not success: # Branch doesn't exist
+            self.run_shell(f"git checkout -b {self.branch_name}")
+        else:
+            self.run_shell(f"git checkout {self.branch_name}")
+
+        # 3. Read Codebase
+        repo_tree = self.get_repo_context()
+
+        # 4. Initial Prompt Build
+        base_prompt = f"""
+        You are a Senior Software Engineer.
+        
+        JIRA TICKET:
+        {jira_context}
+        
+        CURRENT REPOSITORY STRUCTURE:
+        {repo_tree}
+        
+        INSTRUCTIONS:
+        1. For files to create/modify, respond ONLY in this format:
+        ---FILE: path/to/file.ext---
+        content
+        ---END---
+        
+        2. To execute necessary system commands (e.g., npm install), use:
+        ---CMD: your terminal command---
+        
+        Ensure file paths match the existing repository structure.
+        """
+
+        current_prompt = base_prompt
+        max_retries = 2
+        
+        # 5. The Self-Healing Loop
+        for attempt in range(1, max_retries + 2):
+            files, commands, err = self.generate_and_parse(current_prompt, attempt)
+            
+            if err:
+                print(f"❌ {err}")
+                break
+                
+            if not files and not commands:
+                print("🛑 AI returned no valid files or commands.")
+                break
+
+            print(f"   ✅ Saved {len(files)} files to disk.")
+
+            # Execute Commands safely
+            execution_failed = False
+            failed_error = ""
+            
+            if commands:
+                chained_command = " && ".join(commands)
+                print(f"🚀 Auto-Executing sequence: {chained_command}")
+                
+                success, output = self.run_shell(chained_command)
+                
+                if not success:
+                    print(f"❌ Command Failed:\n{output}")
+                    execution_failed = True
+                    failed_error = output
+                else:
+                    print(f"✅ Commands Succeeded.")
+
+            # Self-Healing Evaluation
+            if execution_failed and attempt <= max_retries:
+                print("🩹 Initiating AI Self-Healing...")
+                current_prompt = f"""
+                You previously attempted to solve a ticket, but your terminal command failed.
+                
+                FAILED COMMAND: {chained_command}
+                ERROR OUTPUT: {failed_error}
+                
+                Please fix the error by outputting the corrected ---FILE:--- contents or new ---CMD:--- instructions.
+                """
+            elif execution_failed:
+                print("🛑 Max retries reached. Moving to Git Push anyway.")
+                break
+            else:
+                # Everything worked! Break the loop.
+                break
+
+        # 6. Git Push
         print("\n🚀 Preparing to push to GitHub...")
         self.run_shell("git add .")
+        success, git_status = self.run_shell("git status --porcelain")
         
-        # Check if Git actually sees any changes
-        git_status = self.run_shell("git status --porcelain")
         if not git_status:
-            print("🛑 Git reports no changes. The files generated might be identical to existing ones, or saved outside the repo. Aborting push.")
+            print("🛑 Git reports no changes. Aborting push.")
             return
             
         print("✅ Git detected changes. Committing and pushing...")
@@ -139,7 +212,6 @@ class VibeCoderAgent:
         self.run_shell(f"git push --set-upstream origin {self.branch_name}")
 
         print(f"\n✨ MISSION COMPLETE!")
-        print(f"📂 Files created: {', '.join(verified_files)}")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
