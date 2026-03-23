@@ -149,15 +149,12 @@ async def set_base_branch(request: SetBranchRequest):
 
 @app.post("/api/chat/plan")
 async def generate_plan(request: PlanRequest):
-    """Fetches Jira data, reads local repo, and asks Ollama for a JSON plan."""
+    """Fetches Jira context, reads repo, and generates (or revises) a JSON plan."""
     session = load_session()
     
     # 1. Fetch Jira Context
     try:
-        jira_client = JIRA(
-            server=session["jira_url"], 
-            basic_auth=(session["jira_user"], session["jira_token"])
-        )
+        jira_client = JIRA(server=session["jira_url"], basic_auth=(session["jira_user"], session["jira_token"]))
         issue = jira_client.issue(request.ticket_id)
         jira_context = f"Summary: {issue.fields.summary}\nDescription: {issue.fields.description}"
     except Exception as e:
@@ -167,7 +164,7 @@ async def generate_plan(request: PlanRequest):
     workspace = WorkspaceManager(session["repo_url"], session["github_token"])
     repo_tree = workspace.get_repo_tree()
 
-    # 3. Compile the Prompt
+    # 3. Compile the Architect Prompt
     prompt = f"""
     You are an expert AI Software Architect.
     
@@ -176,71 +173,75 @@ async def generate_plan(request: PlanRequest):
     
     CURRENT REPOSITORY STRUCTURE:
     {repo_tree}
-    
-    Your task is to analyze the ticket and the repository structure, and output a strict JSON plan of action.
-    Do not include any conversational text, markdown formatting, or explanations outside the JSON object.
-    
-    You must respond ONLY with a valid JSON object matching this exact schema:
-    {{
-        "strategy": "A 2-3 sentence explanation of how you will solve this ticket.",
-        "files_to_modify": ["path/to/existing/file.ext"],
-        "new_files": ["path/to/new/file.ext"],
-        "commands_to_run": ["npm install x", "pip install y"]
-    }}
     """
 
-    # 4. Query Ollama (Enforcing JSON Format)
+    # Inject the feedback loop if the user is modifying an existing plan
+    if request.feedback and request.previous_plan:
+        prompt += f"""
+        PREVIOUS PLAN:
+        {json.dumps(request.previous_plan, indent=2)}
+        
+        USER FEEDBACK:
+        {request.feedback}
+        
+        Your task is to revise the previous plan based STRICTLY on the user feedback.
+        """
+    else:
+        prompt += """
+        Your task is to analyze the ticket and the repository structure, and output a strict JSON plan of action.
+        """
+
+    prompt += """
+    Do not include any conversational text, markdown formatting, or explanations outside the JSON object.
+    You must respond ONLY with a valid JSON object matching this exact schema:
+    {
+        "strategy": "A 2-3 sentence explanation of how you will solve this.",
+        "files_to_modify": ["path/to/existing/file.ext"],
+        "new_files": ["path/to/new/file.ext"],
+        "commands_to_run": ["npm install x"]
+    }
+    """
+
+    # 4. Query Ollama
+    print("🧠 Architect Agent is planning...")
     try:
         response = ollama.generate(
-            model="qwen2.5-coder:7b",
+            model="qwen3.5:9b",
             prompt=prompt,
-            format="json",  # This strictly forces the LLM to output valid JSON
-            options={
-                "temperature": 0.1, # Keep it deterministic and logical
-                "num_ctx": 8192
-            }
+            format="json",
+            options={"temperature": 0.1, "num_ctx": 8192}
         )
-        
-        # Parse the JSON response
-        raw_plan = response.get("response", "{}")
-        plan_data = json.loads(raw_plan)
-        
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="LLM failed to generate a valid JSON plan.")
+        plan_data = json.loads(response.get("response", "{}"))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ollama Error: {str(e)}")
 
-    # 5. Return the structured plan to the UI
     return {
         "status": "success", 
         "ticket_id": request.ticket_id,
-        "plan": plan_data
+        "plan": plan_data,
+        "is_revision": bool(request.feedback)
     }
 
 @app.post("/api/chat/execute")
 async def execute_plan(request: ExecuteRequest):
-    """Executes the approved AI plan, writes files, and runs the QA loop."""
+    """Multi-Agent Loop: Developer writes code -> QA tests it -> Developer fixes bugs."""
     session = load_session()
     workspace = WorkspaceManager(session["repo_url"], session["github_token"])
     
     # 1. Setup Branch
-    branch_name = workspace.setup_branch(request.ticket_id)
+    base_branch = session.get("base_branch", "main")
+    branch_name = workspace.setup_branch(request.ticket_id, base_branch)
 
-    # 2. Fetch Jira Context (so the coder has the full requirements)
-    try:
-        jira_client = JIRA(server=session["jira_url"], basic_auth=(session["jira_user"], session["jira_token"]))
-        issue = jira_client.issue(request.ticket_id)
-        jira_context = f"Summary: {issue.fields.summary}\nDescription: {issue.fields.description}"
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Jira fetch failed: {str(e)}")
-
-    # 3. Read Codebase Context
+    # 2. Fetch Jira & Codebase Context
+    jira_client = JIRA(server=session["jira_url"], basic_auth=(session["jira_user"], session["jira_token"]))
+    issue = jira_client.issue(request.ticket_id)
+    jira_context = f"Summary: {issue.fields.summary}\nDescription: {issue.fields.description}"
     repo_tree = workspace.get_repo_tree()
 
-    # 4. Construct the Coder Prompt
+    # 3. Base Developer Prompt
     plan_json = json.dumps(request.plan, indent=2)
-    prompt = f"""
-    You are a Senior Software Engineer. Your task is to implement the following approved plan.
+    developer_prompt = f"""
+    You are the Lead Developer Agent. Implement this approved plan.
     
     JIRA TICKET:
     {jira_context}
@@ -252,100 +253,94 @@ async def execute_plan(request: ExecuteRequest):
     {repo_tree}
     
     INSTRUCTIONS:
-    1. Write the complete, fully-functional code for the files listed in the plan.
-    2. Write unit tests for the new functionality.
-    3. Respond ONLY with the files in this exact format:
+    1. Write the complete, fully-functional code.
+    2. Respond ONLY with the files in this exact format:
     ---FILE: path/to/file.ext---
     content
     ---END---
     """
 
-    # 5. Generate Code via Ollama
-    print("🧠 LLM is writing code based on the approved plan...")
-    try:
-        response = ollama.generate(
-            model="qwen2.5-coder:7b",
-            prompt=prompt,
-            options={"temperature": 0.1, "num_ctx": 8192}
-        )
-        raw_text = response.get("response", "")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ollama failed to generate code: {str(e)}")
-
-    # 6. Parse and Save Files to Disk
+    max_attempts = 3
     saved_files = []
-    if "---FILE:" in raw_text:
-        parts = raw_text.split("---FILE:")
-        for part in parts[1:]:
-            if "---" not in part or "---END---" not in part:
-                continue
-            
-            # Extract path and content safely
-            path = part.split("---")[0].strip().strip("`'\" \n")
-            content = part.split("---")[1].split("---END---")[0].strip()
-            
-            full_path = os.path.join(workspace.repo_path, path)
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            
-            with open(full_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            saved_files.append(path)
+    qa_passed = False
+    qa_logs = []
+
+    # --- MULTI-AGENT LOOP ---
+    for attempt in range(1, max_attempts + 1):
+        print(f"\n🔄 --- AGENT LOOP ATTEMPT {attempt} ---")
+        
+        # Step A: Developer Agent Writes Code
+        print("💻 Developer Agent is writing code...")
+        try:
+            response = ollama.generate(
+                model="qwen3.5:9b",
+                prompt=developer_prompt,
+                options={"temperature": 0.1, "num_ctx": 8192}
+            )
+            raw_text = response.get("response", "")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"LLM Error: {str(e)}")
+
+        # Step B: Parse and Save Files
+        if "---FILE:" in raw_text:
+            parts = raw_text.split("---FILE:")
+            for part in parts[1:]:
+                if "---END---" not in part: continue
+                path = part.split("---")[0].strip().strip("`'\" \n")
+                content = part.split("---")[1].split("---END---")[0].strip()
+                
+                full_path = os.path.join(workspace.repo_path, path)
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                with open(full_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                if path not in saved_files: saved_files.append(path)
+
+        # Step C: Run System Commands (e.g., npm install) ONCE
+        if attempt == 1:
+            commands = request.plan.get("commands_to_run", [])
+            if commands:
+                chained_cmd = " && ".join(commands)
+                print(f"🚀 Running setup commands: {chained_cmd}")
+                success, output = workspace.run_shell_command(chained_cmd)
+                if not success:
+                    raise HTTPException(status_code=500, detail=f"System command failed: {output}")
+
+        # Step D: QA Agent Evaluates
+        qa_success, qa_output = workspace.run_qa_agent()
+        qa_logs.append(qa_output)
+
+        if qa_success:
+            print("🎉 QA Agent approved the build!")
+            qa_passed = True
+            break
+        else:
+            print(f"❌ QA Agent found bugs:\n{qa_output[:300]}...")
+            if attempt < max_attempts:
+                # Step E: Feedback loop back to Developer Agent
+                developer_prompt = f"""
+                You are the Lead Developer Agent. Your previous code submission failed QA validation.
+                
+                QA AGENT ERROR REPORT:
+                {qa_output}
+                
+                Analyze the error, fix the bugs in your code, and output the corrected files using the exact ---FILE: path--- format.
+                """
+            else:
+                print("🛑 Max attempts reached. Agent could not fix the bug.")
 
     if not saved_files:
-        raise HTTPException(status_code=500, detail="The LLM failed to output correctly formatted files.")
+        raise HTTPException(status_code=500, detail="The Developer Agent failed to format the files correctly.")
 
-    # 7. Execute System Commands (e.g., npm install)
-    execution_logs = []
-    commands = request.plan.get("commands_to_run", [])
-    if commands:
-        chained_cmd = " && ".join(commands)
-        print(f"🚀 Running commands: {chained_cmd}")
-        success, output = workspace.run_shell_command(chained_cmd)
-        execution_logs.append({"command": chained_cmd, "success": success, "output": output[:500]})
-        
-        # If install fails, we should abort before testing
-        if not success:
-            raise HTTPException(status_code=500, detail=f"System command failed: {output}")
-
-    # 8. Automated QA / Testing Loop
-    # We attempt to run standard testing commands. Adjust based on your primary tech stack.
-    test_cmd = "npm run test --passWithNoTests" if os.path.exists(os.path.join(workspace.repo_path, "package.json")) else "pytest"
-    print(f"🧪 Running QA check: {test_cmd}")
-    
-    test_success, test_output = workspace.run_shell_command(test_cmd)
-    
-    if not test_success:
-        print("🩹 Tests failed. Attempting self-healing...")
-        # Self-Healing Prompt
-        heal_prompt = f"""
-        You recently wrote code that failed the test suite. 
-        
-        FAILED TEST OUTPUT:
-        {test_output}
-        
-        Please analyze the error and output the corrected file(s) using the exact same ---FILE: path--- format.
-        """
-        heal_response = ollama.generate(model="qwen2.5-coder:7b", prompt=heal_prompt)
-        
-        # We re-parse the healed files (condensed logic for brevity)
-        if "---FILE:" in heal_response.get("response", ""):
-            parts = heal_response["response"].split("---FILE:")
-            for part in parts[1:]:
-                if "---END---" in part:
-                    path = part.split("---")[0].strip()
-                    content = part.split("---")[1].split("---END---")[0].strip()
-                    with open(os.path.join(workspace.repo_path, path), "w", encoding="utf-8") as f:
-                        f.write(content)
-                        
-            # Re-run tests after healing
-            test_success, test_output = workspace.run_shell_command(test_cmd)
+    # 9. Extract the Diffs for the Frontend
+    file_diffs = workspace.get_file_diffs(saved_files)
 
     return {
         "status": "success", 
-        "message": "Code generated and validated.",
+        "message": f"Execution finished. QA Passed: {qa_passed}. (Took {attempt} attempts).",
         "files_created": saved_files,
-        "test_passed": test_success,
-        "logs": execution_logs
+        "test_passed": qa_passed,
+        "qa_logs": qa_logs,
+        "file_diffs": file_diffs
     }
 
 @app.post("/api/chat/push")

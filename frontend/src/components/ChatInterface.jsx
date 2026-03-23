@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { Send, Bot, User, Loader2, GitCommit } from 'lucide-react';
 import PlanCard from './PlanCard';
+import DiffCard from './DiffCard';
 
 export default function ChatInterface() {
   const [messages, setMessages] = useState([
@@ -44,21 +45,48 @@ export default function ChatInterface() {
     }
   };
 
+  // Phase 1.5: Modify Existing Plan
+  const handleModifyPlan = async (ticketId, previousPlan, feedback) => {
+    setIsProcessing(true);
+    addMessage({ role: 'user', type: 'text', content: `Feedback: ${feedback}` });
+    addMessage({ role: 'system', type: 'text', content: `Asking Architect Agent to revise the plan for ${ticketId}...` });
+
+    try {
+      const res = await axios.post('http://localhost:8000/api/chat/plan', { 
+        ticket_id: ticketId,
+        feedback: feedback,
+        previous_plan: previousPlan
+      });
+      
+      addMessage({ 
+        role: 'bot', 
+        type: 'plan', 
+        ticketId: ticketId,
+        plan: res.data.plan 
+      });
+    } catch (err) {
+      addMessage({ role: 'system', type: 'error', content: err.response?.data?.detail || 'Failed to revise plan.' });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   // Phase 2: Execute Plan
   const handleExecute = async (ticketId, plan) => {
     setIsProcessing(true);
     addMessage({ role: 'system', type: 'text', content: `Writing code and running tests for ${ticketId}... This may take a minute.` });
 
     try {
-      const res = await axios.post('http://localhost:8000/api/chat/execute', { ticket_id: ticketId, plan: plan });
+const res = await axios.post('http://localhost:8000/api/chat/execute', { ticket_id: ticketId, plan: plan });
       
-      const successMsg = `Success! ${res.data.files_created.length} files created/modified. QA tests ${res.data.test_passed ? 'passed' : 'skipped/failed'}.`;
+      const successMsg = `Success! ${res.data.files_created.length} files modified. QA tests ${res.data.test_passed ? 'passed' : 'skipped/failed'}.`;
       
       addMessage({ 
         role: 'bot', 
         type: 'action', 
         content: successMsg,
-        ticketId: ticketId
+        ticketId: ticketId,
+        fileDiffs: res.data.file_diffs // NEW: Save the diffs to state
       });
     } catch (err) {
       addMessage({ role: 'system', type: 'error', content: err.response?.data?.detail || 'Execution failed.' });
@@ -126,22 +154,28 @@ export default function ChatInterface() {
                 <PlanCard 
                   plan={msg.plan} 
                   isProcessing={isProcessing} 
-                  onApprove={() => handleExecute(msg.ticketId, msg.plan)} 
+                  onApprove={() => handleExecute(msg.ticketId, msg.plan)}
+                  onModify={(feedback) => handleModifyPlan(msg.ticketId, msg.plan, feedback)}
                 />
               )}
 
               {/* Bot Push Action Card */}
               {msg.role === 'bot' && msg.type === 'action' && (
-                <div className="bg-slate-800 border border-slate-700 text-slate-200 p-4 rounded-xl shadow-lg mt-2">
-                  <p className="mb-4 text-emerald-400 font-medium">{msg.content}</p>
-                  <button 
-                    onClick={() => handlePush(msg.ticketId)}
-                    disabled={isProcessing}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <GitCommit size={16} />
-                    Push to GitHub
-                  </button>
+                <div className="mt-2 w-full">
+                  <div className="bg-slate-800 border border-slate-700 text-slate-200 p-4 rounded-xl shadow-lg mb-4">
+                    <p className="mb-4 text-emerald-400 font-medium">{msg.content}</p>
+                    <button 
+                      onClick={() => handlePush(msg.ticketId)}
+                      disabled={isProcessing}
+                      className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <GitCommit size={16} />
+                      Approve & Push to GitHub
+                    </button>
+                  </div>
+                  
+                  {/* Render the actual Code Diffs below the action box */}
+                  {msg.fileDiffs && <DiffCard diffs={msg.fileDiffs} />}
                 </div>
               )}
             </div>

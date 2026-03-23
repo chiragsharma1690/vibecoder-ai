@@ -154,3 +154,93 @@ class WorkspaceManager:
         self.run_git_command("checkout", branch_name)
         self.run_git_command("pull", "origin", branch_name)
         return branch_name
+
+    def run_qa_agent(self, dev_cmd="npm run dev", port=5173):
+        """QA Agent: Runs static tests, then boots the dev server to check for runtime compilation errors."""
+        import time
+        import requests
+        
+        # 1. Static Checks (npm test)
+        test_cmd = "npm run test --passWithNoTests" if os.path.exists(os.path.join(self.repo_path, "package.json")) else "pytest"
+        print(f"🧪 QA Agent running static tests: {test_cmd}")
+        success, output = self.run_shell_command(test_cmd)
+        if not success:
+            return False, f"Static Tests Failed:\n{output}"
+
+        # 2. Runtime Compilation Check (npm run dev)
+        if not os.path.exists(os.path.join(self.repo_path, "package.json")):
+            return True, "No package.json found. Skipping frontend dev server check."
+
+        print(f"🕵️‍♂️ QA Agent booting dev server to check for crash loops: {dev_cmd}")
+        
+        # Start server in the background
+        process = subprocess.Popen(
+            dev_cmd,
+            shell=True,
+            cwd=self.repo_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        server_up = False
+        qa_report = ""
+        
+        try:
+            # Poll the server for up to 15 seconds
+            for _ in range(15):
+                time.sleep(1)
+                
+                # Check if process immediately crashed (e.g., missing module)
+                if process.poll() is not None:
+                    stdout, stderr = process.communicate()
+                    return False, f"Dev server crashed immediately.\nSTDOUT: {stdout}\nSTDERR: {stderr}"
+
+                # Try to ping the frontend UI
+                try:
+                    resp = requests.get(f"http://localhost:{port}")
+                    if resp.status_code == 200:
+                        server_up = True
+                        break
+                except requests.ConnectionError:
+                    continue
+
+            if not server_up:
+                process.terminate()
+                return False, f"Dev server started but never responded on port {port} within 15 seconds. It is likely stuck in a compilation error."
+
+            print("✅ QA Agent verified dev server successfully compiled and responded with 200 OK.")
+            qa_report = "All static tests passed, and the development server successfully compiled and rendered the UI."
+            return True, qa_report
+
+        finally:
+            # CLEANUP: Ensure the server is killed so it doesn't block future runs
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+    def get_file_diffs(self, modified_files: list):
+        """Fetches the old and new content for a list of modified files."""
+        diffs = []
+        for file_path in modified_files:
+            # 1. Get Old Content (from the last Git commit)
+            # We use check=False because if it's a brand new file, 'git show' will fail, which is expected.
+            old_result = self.run_git_command("show", f"HEAD:{file_path}", check=False)
+            old_content = old_result.stdout if old_result.returncode == 0 else ""
+
+            # 2. Get New Content (from the local disk)
+            full_path = os.path.join(self.repo_path, file_path)
+            new_content = ""
+            if os.path.exists(full_path):
+                with open(full_path, "r", encoding="utf-8") as f:
+                    new_content = f.read()
+
+            diffs.append({
+                "file": file_path,
+                "old_content": old_content,
+                "new_content": new_content
+            })
+            
+        return diffs
