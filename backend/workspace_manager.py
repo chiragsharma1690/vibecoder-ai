@@ -67,26 +67,115 @@ class WorkspaceManager:
         self.run_git_command("checkout", "-b", branch_name)
         return branch_name
 
-    def capture_dev_screenshot(self, port=5173):
+    def capture_dev_screenshot(self, components=None, port=5174, dev_cmd="npm run dev -- --port 5174"):
+        """Boots a temporary dev server, uses Playwright to snap screenshots, and kills the server."""
         from playwright.sync_api import sync_playwright
-        print(f"📸 Snapping screenshot of http://localhost:{port}...")
+        import time
+        import requests
+        import json
+
+        if components is None:
+            components = [{"route": "/", "selector": "body"}]
+
+        shot_dir = os.path.join(self.repo_path, ".agent")
+        os.makedirs(shot_dir, exist_ok=True)
+        saved_shots = []
+
+        # 1. Check if this is even a frontend project with a dev script
+        pkg_json_path = os.path.join(self.repo_path, "package.json")
+        if not os.path.exists(pkg_json_path):
+            print("⏭️ No package.json found. Skipping visual screenshot.")
+            return []
+            
         try:
+            with open(pkg_json_path, 'r', encoding='utf-8') as f:
+                scripts = json.load(f).get("scripts", {})
+                if "dev" not in scripts:
+                    print("⏭️ No 'dev' script found. Skipping visual screenshot.")
+                    return []
+        except Exception:
+            return []
+
+        # 2. Boot the temporary screenshot server
+        print(f"🚀 Booting temporary dev server for photoshoot: {dev_cmd}")
+        process = subprocess.Popen(
+            dev_cmd,
+            shell=True,
+            cwd=self.repo_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        try:
+            # 3. Wait for the server to come online (max 15 seconds)
+            server_up = False
+            for _ in range(15):
+                time.sleep(1)
+                if process.poll() is not None:
+                    break # Process crashed
+                try:
+                    if requests.get(f"http://localhost:{port}").status_code == 200:
+                        server_up = True
+                        break
+                except requests.ConnectionError:
+                    continue
+
+            if not server_up:
+                print(f"⚠️ Dev server failed to respond on port {port}. Cannot take screenshots.")
+                return []
+
+            # 4. Take the precision screenshots
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
                 page = browser.new_page()
-                page.goto(f"http://localhost:{port}")
-                page.wait_for_load_state('networkidle')
-                
-                shot_dir = os.path.join(self.repo_path, ".agent")
-                os.makedirs(shot_dir, exist_ok=True)
-                shot_path = os.path.join(shot_dir, "preview.png")
-                
-                page.screenshot(path=shot_path, full_page=True)
+
+                for idx, comp in enumerate(components):
+                    route = comp.get("route", "/")
+                    selector = comp.get("selector", "body")
+                    
+                    if not route.startswith("/"): 
+                        route = "/" + route
+                        
+                    target_url = f"http://localhost:{port}{route}"
+                    print(f"📸 Hunting for '{selector}' on {target_url}...")
+                    
+                    try:
+                        page.goto(target_url, timeout=10000)
+                        page.wait_for_load_state('networkidle', timeout=5000)
+                        time.sleep(1.5) # Give React a moment to render state/animations
+                        
+                        file_name = f"preview_{idx}.png"
+                        shot_path = os.path.join(shot_dir, file_name)
+                        
+                        # Attempt precision crop
+                        if selector and selector != "body":
+                            try:
+                                element = page.locator(selector).first
+                                element.wait_for(state="visible", timeout=3000)
+                                element.screenshot(path=shot_path)
+                                print(f"🎯 Successfully cropped screenshot of {selector}")
+                            except Exception as e:
+                                print(f"⚠️ Could not find '{selector}', falling back to full page. ({e})")
+                                page.screenshot(path=shot_path, full_page=True)
+                        else:
+                            page.screenshot(path=shot_path, full_page=True)
+                        
+                        saved_shots.append(f".agent/{file_name}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to navigate to {target_url}: {e}")
+
                 browser.close()
-                return ".agent/preview.png"
-        except Exception as e:
-            print(f"⚠️ Screenshot failed: {e}")
-            return None
+                return saved_shots
+                
+        finally:
+            # 5. CLEANUP: Always execute this to prevent port hogging
+            print("🧹 Tearing down temporary photoshoot server...")
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
 
     def create_pull_request(self, target_branch: str, base_branch: str, title: str, body: str):
         print(f"📝 Opening Pull Request: {target_branch} -> {base_branch}")
@@ -133,7 +222,7 @@ class WorkspaceManager:
         self.run_git_command("pull", "origin", branch_name)
         return branch_name
 
-    def run_qa_agent(self, dev_cmd="npm run dev", port=5173):
+    def run_qa_agent(self, dev_cmd="npm run dev -- --port 5174", port=5174):
         pkg_json_path = os.path.join(self.repo_path, "package.json")
         has_package_json = os.path.exists(pkg_json_path)
         has_test_script, has_dev_script = False, False
@@ -205,3 +294,65 @@ class WorkspaceManager:
 
             diffs.append({"file": file_path, "old_content": old_content, "new_content": new_content})
         return diffs
+    
+    def ensure_gitignore(self):
+        """Creates or updates a .gitignore to prevent pushing node_modules and build files."""
+        gitignore_path = os.path.join(self.repo_path, ".gitignore")
+        ignore_rules = ["node_modules/", "dist/", "build/", ".env", "__pycache__/", ".DS_Store"]
+        
+        # If it doesn't exist, create it
+        if not os.path.exists(gitignore_path):
+            with open(gitignore_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(ignore_rules) + "\n")
+            print("🛡️ Created new .gitignore")
+            return
+
+        # If it does exist, append missing rules safely
+        with open(gitignore_path, "r", encoding="utf-8") as f:
+            existing_rules = f.read().splitlines()
+
+        missing_rules = [rule for rule in ignore_rules if rule not in existing_rules]
+        
+        if missing_rules:
+            with open(gitignore_path, "a", encoding="utf-8") as f:
+                f.write("\n# VibeCoder Auto-Ignores\n")
+                f.write("\n".join(missing_rules) + "\n")
+            print("🛡️ Updated existing .gitignore")
+
+    def run_qa_tests(self, test_cmd: str):
+        """Executes dynamic test commands and parses for >80% coverage."""
+        import re
+        
+        if not test_cmd:
+            return False, "No test command provided."
+
+        print(f"⚙️ Running tests & coverage: {test_cmd}")
+        success, output = self.run_shell_command(test_cmd)
+
+        # Save the coverage report to a file so we can attach it to the PR later
+        cov_dir = os.path.join(self.repo_path, ".agent")
+        os.makedirs(cov_dir, exist_ok=True)
+        cov_path = os.path.join(cov_dir, "coverage.txt")
+        
+        with open(cov_path, "w", encoding="utf-8") as f:
+            f.write(output)
+
+        lower_output = output.lower()
+        
+        # 1. Check for hard test failures
+        if not success or "failed" in lower_output or "error:" in lower_output:
+            return False, f"Test execution failed or test cases failed:\n{output[-1000:]}"
+
+        # 2. Parse for coverage percentage
+        # Looks for patterns like "85%", "79.5 %", etc.
+        percentages = re.findall(r'(\d+(?:\.\d+)?)[\s]*%', output)
+        if percentages:
+            # Convert all found percentages to floats
+            floats = [float(p) for p in percentages]
+            # Ignore 100% (often used for trivial files) and check if any fall below 80%
+            low_coverage = [p for p in floats if p < 80.0]
+            
+            if low_coverage:
+                return False, f"Tests passed, but coverage is below 80% (Found {min(low_coverage)}%). Please add more comprehensive test cases to reach >80% coverage.\n{output[-1000:]}"
+
+        return True, "All tests passed with adequate coverage."
