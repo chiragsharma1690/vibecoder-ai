@@ -6,7 +6,7 @@ import DiffCard from './DiffCard';
 
 export default function ChatInterface() {
   const [messages, setMessages] = useState([
-    { role: 'bot', type: 'text', content: 'Agent initialized and repository cloned. Enter a Jira ticket ID (e.g., KAN-123) to begin.' }
+    { role: 'bot', type: 'text', content: 'Agent initialized. Select a branch during setup, then enter a Jira ticket ID (e.g., KAN-123) to begin.' }
   ]);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -71,23 +71,42 @@ export default function ChatInterface() {
     }
   };
 
-  // Phase 2: Execute Plan
-  const handleExecute = async (ticketId, plan) => {
+  // Phase 2: Execute Plan (Sync or Async)
+  const handleExecute = async (ticketId, plan, asyncMode) => {
     setIsProcessing(true);
-    addMessage({ role: 'system', type: 'text', content: `Writing code and running tests for ${ticketId}... This may take a minute.` });
+    
+    // Adjust loading message based on mode
+    const loadingMsg = asyncMode 
+      ? `Dispatching AI to implement ${ticketId} in the background...` 
+      : `Writing code and running tests for ${ticketId}... This may take a minute.`;
+      
+    addMessage({ role: 'system', type: 'text', content: loadingMsg });
 
     try {
-const res = await axios.post('http://localhost:8000/api/chat/execute', { ticket_id: ticketId, plan: plan });
-      
-      const successMsg = `Success! ${res.data.files_created.length} files modified. QA tests ${res.data.test_passed ? 'passed' : 'skipped/failed'}.`;
-      
-      addMessage({ 
-        role: 'bot', 
-        type: 'action', 
-        content: successMsg,
-        ticketId: ticketId,
-        fileDiffs: res.data.file_diffs // NEW: Save the diffs to state
+      const res = await axios.post('http://localhost:8000/api/chat/execute', { 
+        ticket_id: ticketId, 
+        plan: plan,
+        async_mode: asyncMode // Pass the toggle state to FastAPI
       });
+      
+      if (res.data.status === 'async') {
+        // ASYNC MODE: Just show the success message, no diffs needed
+        addMessage({ 
+          role: 'bot', 
+          type: 'text', 
+          content: `🚀 ${res.data.message}` 
+        });
+      } else {
+        // SYNC MODE: Show the diffs and ask for manual push approval
+        const successMsg = `Success! ${res.data.files_created.length} files modified. QA tests ${res.data.test_passed ? 'passed' : 'skipped/failed'}.`;
+        addMessage({ 
+          role: 'bot', 
+          type: 'action', 
+          content: successMsg,
+          ticketId: ticketId,
+          fileDiffs: res.data.file_diffs
+        });
+      }
     } catch (err) {
       addMessage({ role: 'system', type: 'error', content: err.response?.data?.detail || 'Execution failed.' });
     } finally {
@@ -95,7 +114,7 @@ const res = await axios.post('http://localhost:8000/api/chat/execute', { ticket_
     }
   };
 
-  // Phase 3: Push Code
+  // Phase 3: Push Code (Only used in Sync Mode)
   const handlePush = async (ticketId) => {
     setIsProcessing(true);
     addMessage({ role: 'system', type: 'text', content: `Pushing changes to GitHub...` });
@@ -125,7 +144,7 @@ const res = await axios.post('http://localhost:8000/api/chat/execute', { ticket_
             )}
 
             {/* Message Bubble */}
-            <div className={`max-w-[80%] ${msg.role === 'user' ? 'order-1' : 'order-2'}`}>
+            <div className={`max-w-[85%] ${msg.role === 'user' ? 'order-1' : 'order-2'}`}>
               
               {/* User Text */}
               {msg.role === 'user' && (
@@ -154,12 +173,12 @@ const res = await axios.post('http://localhost:8000/api/chat/execute', { ticket_
                 <PlanCard 
                   plan={msg.plan} 
                   isProcessing={isProcessing} 
-                  onApprove={() => handleExecute(msg.ticketId, msg.plan)}
+                  onApprove={(asyncMode) => handleExecute(msg.ticketId, msg.plan, asyncMode)}
                   onModify={(feedback) => handleModifyPlan(msg.ticketId, msg.plan, feedback)}
                 />
               )}
 
-              {/* Bot Push Action Card */}
+              {/* Bot Push Action Card (Sync Mode Only) */}
               {msg.role === 'bot' && msg.type === 'action' && (
                 <div className="mt-2 w-full">
                   <div className="bg-slate-800 border border-slate-700 text-slate-200 p-4 rounded-xl shadow-lg mb-4">
@@ -174,7 +193,7 @@ const res = await axios.post('http://localhost:8000/api/chat/execute', { ticket_
                     </button>
                   </div>
                   
-                  {/* Render the actual Code Diffs below the action box */}
+                  {/* Code Diffs */}
                   {msg.fileDiffs && <DiffCard diffs={msg.fileDiffs} />}
                 </div>
               )}

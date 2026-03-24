@@ -3,6 +3,7 @@ import { CheckCircle2, FilePlus, PlayCircle, RefreshCw } from 'lucide-react';
 
 export default function PlanCard({ plan, onApprove, onModify, isProcessing }) {
   const [feedback, setFeedback] = useState('');
+  const [asyncMode, setAsyncMode] = useState(false);
 
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-lg p-5 mt-2 shadow-lg w-full max-w-2xl">
@@ -40,36 +41,31 @@ export default function PlanCard({ plan, onApprove, onModify, isProcessing }) {
         
         {/* Actions & Feedback */}
         <div className="pt-4 border-t border-slate-700 space-y-3">
-          <textarea 
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-            disabled={isProcessing}
-            placeholder="Request changes to this plan (e.g., 'Do not create a new file, put logic in utils.js')..."
-            className="w-full bg-slate-800 border border-slate-600 rounded-md p-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
-            rows="2"
-          />
+          {/* ... feedback textarea ... */}
           
-          <div className="flex justify-end gap-3">
-            <button 
-              onClick={() => {
-                onModify(feedback);
-                setFeedback('');
-              }}
-              disabled={isProcessing || !feedback.trim()}
-              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50"
-            >
-              <RefreshCw size={16} />
-              Modify Plan
-            </button>
+          <div className="flex items-center justify-between mt-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input 
+                type="checkbox" 
+                checked={asyncMode} 
+                onChange={(e) => setAsyncMode(e.target.checked)}
+                className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 bg-slate-800 border-slate-600"
+              />
+              <span className="text-sm text-slate-300">Async Mode (Auto-create PR)</span>
+            </label>
 
-            <button 
-              onClick={onApprove}
-              disabled={isProcessing}
-              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50"
-            >
-              <CheckCircle2 size={16} />
-              Approve & Execute
-            </button>
+            <div className="flex gap-3">
+              <button onClick={() => onModify(feedback)} /* ... */>Modify Plan</button>
+              
+              <button 
+                onClick={() => onApprove(asyncMode)} // Pass the mode up to ChatInterface
+                disabled={isProcessing}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                <CheckCircle2 size={16} />
+                {asyncMode ? 'Dispatch AI (Async)' : 'Approve & Review Diffs'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
