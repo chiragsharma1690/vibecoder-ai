@@ -12,7 +12,6 @@ export default function ChatInterface() {
   const [isProcessing, setIsProcessing] = useState(false);
   const chatEndRef = useRef(null);
 
-  // Auto-scroll to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -22,7 +21,7 @@ export default function ChatInterface() {
   // Phase 1: Request Plan
   const handleSend = async (e) => {
     e.preventDefault();
-    if (!input.trim() || isProcessing) return;
+    if (!input.trim() || isProcessing) return; // Concurrency Lock
 
     const ticketId = input.trim();
     setInput('');
@@ -32,12 +31,7 @@ export default function ChatInterface() {
 
     try {
       const res = await axios.post('http://localhost:8000/api/chat/plan', { ticket_id: ticketId });
-      addMessage({ 
-        role: 'bot', 
-        type: 'plan', 
-        ticketId: ticketId,
-        plan: res.data.plan 
-      });
+      addMessage({ role: 'bot', type: 'plan', ticketId: ticketId, plan: res.data.plan });
     } catch (err) {
       addMessage({ role: 'system', type: 'error', content: err.response?.data?.detail || 'Failed to generate plan.' });
     } finally {
@@ -47,6 +41,8 @@ export default function ChatInterface() {
 
   // Phase 1.5: Modify Existing Plan
   const handleModifyPlan = async (ticketId, previousPlan, feedback) => {
+    if (isProcessing || !feedback.trim()) return; // Concurrency & Empty String Lock
+    
     setIsProcessing(true);
     addMessage({ role: 'user', type: 'text', content: `Feedback: ${feedback}` });
     addMessage({ role: 'system', type: 'text', content: `Asking Architect Agent to revise the plan for ${ticketId}...` });
@@ -57,13 +53,7 @@ export default function ChatInterface() {
         feedback: feedback,
         previous_plan: previousPlan
       });
-      
-      addMessage({ 
-        role: 'bot', 
-        type: 'plan', 
-        ticketId: ticketId,
-        plan: res.data.plan 
-      });
+      addMessage({ role: 'bot', type: 'plan', ticketId: ticketId, plan: res.data.plan });
     } catch (err) {
       addMessage({ role: 'system', type: 'error', content: err.response?.data?.detail || 'Failed to revise plan.' });
     } finally {
@@ -71,14 +61,14 @@ export default function ChatInterface() {
     }
   };
 
-  // Phase 2: Execute Plan (Sync or Async)
+  // Phase 2: Execute Plan
   const handleExecute = async (ticketId, plan, asyncMode) => {
+    if (isProcessing) return; // Concurrency Lock
     setIsProcessing(true);
     
-    // Adjust loading message based on mode
     const loadingMsg = asyncMode 
       ? `Dispatching AI to implement ${ticketId} in the background...` 
-      : `Writing code and running tests for ${ticketId}... This may take a minute.`;
+      : `Writing code, running QA, and reviewing logic for ${ticketId}... This may take a minute.`;
       
     addMessage({ role: 'system', type: 'text', content: loadingMsg });
 
@@ -86,25 +76,16 @@ export default function ChatInterface() {
       const res = await axios.post('http://localhost:8000/api/chat/execute', { 
         ticket_id: ticketId, 
         plan: plan,
-        async_mode: asyncMode // Pass the toggle state to FastAPI
+        async_mode: asyncMode 
       });
       
       if (res.data.status === 'async') {
-        // ASYNC MODE: Just show the success message, no diffs needed
-        addMessage({ 
-          role: 'bot', 
-          type: 'text', 
-          content: `🚀 ${res.data.message}` 
-        });
+        addMessage({ role: 'bot', type: 'text', content: `🚀 ${res.data.message}` });
       } else {
-        // SYNC MODE: Show the diffs and ask for manual push approval
-        const successMsg = `Success! ${res.data.files_created.length} files modified. QA tests ${res.data.test_passed ? 'passed' : 'skipped/failed'}.`;
+        const successMsg = `Success! ${res.data.files_created.length} files modified. QA and Review ${res.data.test_passed ? 'passed ✅' : 'failed ⚠️'}.`;
         addMessage({ 
-          role: 'bot', 
-          type: 'action', 
-          content: successMsg,
-          ticketId: ticketId,
-          fileDiffs: res.data.file_diffs
+          role: 'bot', type: 'action', content: successMsg,
+          ticketId: ticketId, fileDiffs: res.data.file_diffs
         });
       }
     } catch (err) {
@@ -114,8 +95,9 @@ export default function ChatInterface() {
     }
   };
 
-  // Phase 3: Push Code (Only used in Sync Mode)
+  // Phase 3: Push Code
   const handlePush = async (ticketId) => {
+    if (isProcessing) return; // Concurrency Lock
     setIsProcessing(true);
     addMessage({ role: 'system', type: 'text', content: `Pushing changes to GitHub...` });
 
@@ -131,44 +113,37 @@ export default function ChatInterface() {
 
   return (
     <div className="flex flex-col h-full bg-slate-900 w-full rounded-xl overflow-hidden">
-      {/* Chat History Container */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {messages.map((msg, idx) => (
           <div key={idx} className={`flex gap-4 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             
-            {/* Avatar */}
             {msg.role !== 'user' && msg.role !== 'system' && (
               <div className="w-8 h-8 rounded-full bg-blue-600/20 flex items-center justify-center shrink-0">
                 <Bot size={18} className="text-blue-400" />
               </div>
             )}
 
-            {/* Message Bubble */}
             <div className={`max-w-[85%] ${msg.role === 'user' ? 'order-1' : 'order-2'}`}>
               
-              {/* User Text */}
               {msg.role === 'user' && (
                 <div className="bg-blue-600 text-white px-4 py-2 rounded-2xl rounded-tr-sm inline-block">
                   {msg.content}
                 </div>
               )}
 
-              {/* System Messages (Loading/Errors) */}
               {msg.role === 'system' && (
                 <div className={`text-sm px-4 py-2 rounded-lg border ${msg.type === 'error' ? 'bg-red-900/20 border-red-800 text-red-400' : 'bg-slate-800 border-slate-700 text-slate-400'} flex items-center gap-2`}>
-                  {msg.type !== 'error' && isProcessing && <Loader2 size={14} className="animate-spin" />}
+                  {msg.type !== 'error' && isProcessing && <Loader2 size={14} className="animate-spin shrink-0" />}
                   {msg.content}
                 </div>
               )}
 
-              {/* Bot Text */}
               {msg.role === 'bot' && msg.type === 'text' && (
-                <div className="bg-slate-800 border border-slate-700 text-slate-200 px-4 py-3 rounded-2xl rounded-tl-sm inline-block">
+                <div className="bg-slate-800 border border-slate-700 text-slate-200 px-4 py-3 rounded-2xl rounded-tl-sm inline-block whitespace-pre-wrap">
                   {msg.content}
                 </div>
               )}
 
-              {/* Bot Plan Card */}
               {msg.role === 'bot' && msg.type === 'plan' && (
                 <PlanCard 
                   plan={msg.plan} 
@@ -178,7 +153,6 @@ export default function ChatInterface() {
                 />
               )}
 
-              {/* Bot Push Action Card (Sync Mode Only) */}
               {msg.role === 'bot' && msg.type === 'action' && (
                 <div className="mt-2 w-full">
                   <div className="bg-slate-800 border border-slate-700 text-slate-200 p-4 rounded-xl shadow-lg mb-4">
@@ -192,14 +166,11 @@ export default function ChatInterface() {
                       Approve & Push to GitHub
                     </button>
                   </div>
-                  
-                  {/* Code Diffs */}
                   {msg.fileDiffs && <DiffCard diffs={msg.fileDiffs} />}
                 </div>
               )}
             </div>
 
-            {/* User Avatar */}
             {msg.role === 'user' && (
               <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center shrink-0 order-2">
                 <User size={18} className="text-slate-300" />
@@ -210,7 +181,6 @@ export default function ChatInterface() {
         <div ref={chatEndRef} />
       </div>
 
-      {/* Input Area */}
       <div className="p-4 bg-slate-800 border-t border-slate-700">
         <form onSubmit={handleSend} className="relative flex items-center">
           <input
@@ -224,7 +194,7 @@ export default function ChatInterface() {
           <button
             type="submit"
             disabled={!input.trim() || isProcessing}
-            className="absolute right-2 p-2 bg-blue-600 hover:bg-blue-500 rounded-full text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="absolute right-2 p-2 bg-blue-600 hover:bg-blue-500 rounded-full text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
           >
             <Send size={18} />
           </button>
