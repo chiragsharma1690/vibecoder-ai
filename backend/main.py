@@ -8,12 +8,13 @@ from workspace import WorkspaceManager
 from agents import generate_architect_plan
 from pipeline import run_multi_agent_loop, background_agent_worker
 
-# Initialize the app
+# Initialize the FastAPI App
 app = FastAPI(title="VibeCoder AI API")
 
+# Configure CORS to allow the React frontend to communicate with the backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "[http://127.0.0.1:5173](http://127.0.0.1:5173)"], 
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], 
     allow_credentials=True, 
     allow_methods=["*"], 
     allow_headers=["*"],
@@ -21,10 +22,15 @@ app.add_middleware(
 
 @app.get("/")
 async def health_check():
+    """Simple health check endpoint."""
     return {"status": "active", "message": "VibeCoder Backend is alive."}
 
 @app.post("/api/connect")
 async def connect_workspace(request: ConnectRequest):
+    """
+    STEP 1: Validates external credentials, initializes the workspace manager, 
+    clones the repository, and saves the session data locally.
+    """
     # Validate Jira
     try:
         jira_client = JIRA(server=request.jira_url, basic_auth=(request.jira_user, request.jira_token))
@@ -32,7 +38,7 @@ async def connect_workspace(request: ConnectRequest):
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Jira Authentication Failed. Error: {str(e)}")
 
-    # Setup Workspace
+    # Validate GitHub and Setup Workspace
     workspace = WorkspaceManager(request.repo_url, request.github_token)
     if not workspace.verify_access():
         raise HTTPException(status_code=401, detail="GitHub Authentication Failed.")
@@ -42,7 +48,7 @@ async def connect_workspace(request: ConnectRequest):
     except Exception as e: 
         raise HTTPException(status_code=500, detail=f"Failed to clone repository: {str(e)}")
     
-    # Save active state
+    # Persist the connection config across API calls
     save_session({
         "github_token": request.github_token, 
         "jira_url": request.jira_url,
@@ -61,6 +67,7 @@ async def connect_workspace(request: ConnectRequest):
 
 @app.post("/api/set-branch")
 async def set_base_branch(request: SetBranchRequest):
+    """STEP 2: Allows the user to select the foundational Git branch for operations."""
     session = load_session()
     workspace = WorkspaceManager(session["repo_url"], session["github_token"])
     
@@ -75,6 +82,10 @@ async def set_base_branch(request: SetBranchRequest):
 
 @app.post("/api/chat/plan")
 async def generate_plan(request: PlanRequest):
+    """
+    Invokes the Architect Agent to map out the strategy, necessary file changes, 
+    and pre-flight commands needed to resolve the provided Jira Ticket.
+    """
     session = load_session()
     workspace = WorkspaceManager(session["repo_url"], session["github_token"])
     
@@ -89,6 +100,10 @@ async def generate_plan(request: PlanRequest):
 
 @app.post("/api/chat/execute")
 async def execute_plan(request: ExecuteRequest, background_tasks: BackgroundTasks):
+    """
+    Triggers the Multi-Agent coding pipeline. Routes execution to a background worker 
+    if 'async_mode' is True; otherwise, runs synchronously and returns execution diffs to the UI.
+    """
     session = load_session()
     workspace = WorkspaceManager(session["repo_url"], session["github_token"])
 
@@ -99,7 +114,7 @@ async def execute_plan(request: ExecuteRequest, background_tasks: BackgroundTask
             "message": f"Agent dispatched. A Pull Request for {request.ticket_id} will be generated."
         }
     else:
-        # Sync Mode
+        # Sync Mode: Blocks the API request until the pipeline finishes
         base_branch = session.get("base_branch", "main")
         workspace.setup_branch(request.ticket_id, base_branch)
         
@@ -120,16 +135,17 @@ async def execute_plan(request: ExecuteRequest, background_tasks: BackgroundTask
 
 @app.post("/api/chat/push")
 async def push_code(request: PushRequest):
+    """Allows manual approval of synchronous mode changes, committing and pushing them to remote."""
     session = load_session()
     workspace = WorkspaceManager(session["repo_url"], session["github_token"])
     
-    # We reconstruct the branch name using UUID logic if needed, 
-    # but strictly following the PR branch name format requested earlier.
-    # Note: In synchronous flow, you might need to read the current branch name via git
+    # Retrieve the name of the feature branch we are currently resting on
     current_branch_cmd = workspace.run_git_command("branch", "--show-current")
     branch_name = current_branch_cmd.stdout.strip()
     
     workspace.run_git_command("add", ".")
+    
+    # Short-circuit if there are no real changes to push
     if not workspace.run_git_command("status", "--porcelain").stdout.strip():
         return {"status": "skipped", "message": "Git reports no changes."}
         
