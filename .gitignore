@@ -27,3 +27,4 @@ dist-ssr
 workspaces/
 __pycache__
 package-lock.json
+.vite
