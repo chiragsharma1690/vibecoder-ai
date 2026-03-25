@@ -2,11 +2,11 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from jira import JIRA
 
-# Import our modularized files
 from schemas import ConnectRequest, PlanRequest, ExecuteRequest, PushRequest, SetBranchRequest
 from session import save_session, load_session
-from workspace_manager import WorkspaceManager
-from agent_service import generate_architect_plan, run_multi_agent_loop, background_agent_worker
+from workspace import WorkspaceManager
+from agents import generate_architect_plan
+from pipeline import run_multi_agent_loop, background_agent_worker
 
 # Initialize the app
 app = FastAPI(title="VibeCoder AI API")
@@ -93,28 +93,30 @@ async def execute_plan(request: ExecuteRequest, background_tasks: BackgroundTask
     workspace = WorkspaceManager(session["repo_url"], session["github_token"])
 
     if request.async_mode:
-        # Pass to the background worker and return 200 immediately
         background_tasks.add_task(background_agent_worker, request, session, workspace)
         return {
             "status": "async", 
             "message": f"Agent dispatched. A Pull Request for {request.ticket_id} will be generated."
         }
     else:
-        # Sync Mode: Hold connection open, run loop, return diffs
+        # Sync Mode
         base_branch = session.get("base_branch", "main")
         workspace.setup_branch(request.ticket_id, base_branch)
         
-        saved_files, qa_passed, qa_logs = run_multi_agent_loop(request, session, workspace)
-        file_diffs = workspace.get_file_diffs(saved_files)
+        try:
+            saved_files, qa_passed, qa_logs = run_multi_agent_loop(request, session, workspace)
+            file_diffs = workspace.get_file_diffs(saved_files)
 
-        return {
-            "status": "success", 
-            "message": f"Execution finished. QA Passed: {qa_passed}.",
-            "files_created": saved_files, 
-            "test_passed": qa_passed,
-            "qa_logs": qa_logs, 
-            "file_diffs": file_diffs
-        }
+            return {
+                "status": "success", 
+                "message": f"Execution finished. QA Passed: {qa_passed}.",
+                "files_created": saved_files, 
+                "test_passed": qa_passed,
+                "qa_logs": qa_logs, 
+                "file_diffs": file_diffs
+            }
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat/push")
 async def push_code(request: PushRequest):
