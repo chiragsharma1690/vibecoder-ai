@@ -166,7 +166,7 @@ def background_agent_worker(request: ExecuteRequest, session: dict, workspace: W
 
         workspace.ensure_gitignore()
         
-        # Capture and append visual coverage proof
+        # Capture and append visual coverage proof, if exists
         coverage_img_path = None
         cov_path = os.path.join(workspace.repo_path, ".agent", "coverage.txt")
         if os.path.exists(cov_path):
