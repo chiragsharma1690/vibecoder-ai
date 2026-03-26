@@ -110,6 +110,10 @@ def generate_architect_plan(ticket_id: str, jira_context: str, repo_tree: str, f
     2. Be EXHAUSTIVE. If bootstrapping a new project without a CLI tool, you must explicitly list EVERY necessary configuration file (e.g., package.json, requirements.txt, .env) in the `new_files` array.
     3. If dependencies are needed, provide REAL package manager commands based on the repo structure. 
     4. Provide EXACT file paths as they will appear in the repository tree.
+    5. DIRECTORY MATCHING: You MUST inspect the CURRENT REPOSITORY STRUCTURE. 
+       - Do NOT invent new root folders. If a `src` or `components` folder already exists, you MUST place new files inside the EXISTING folders.
+       - NEVER create duplicate structures like `src/src/`.
+       - If adding a feature to an existing app, modify the EXISTING entry points (e.g., `src/App.jsx`, `src/main.jsx`) in `files_to_modify` rather than creating new ones.
     """
     print("🧠 Architect Agent is planning...")
     return json.loads(call_llm(prompt, format_type="json"))
@@ -120,67 +124,67 @@ def run_developer_agent(prompt: str, repo_path: str, saved_files: list):
     raw_text = call_llm(prompt)
     extract_and_save_files(raw_text, repo_path, saved_files)
 
-def generate_qa_command(saved_files: list, repo_tree: str, repo_path: str, last_qa_error: str):
+def run_qa_agent(saved_files: list, repo_tree: str, repo_path: str):
     """
-    The QA Agent. Determines the language framework contextually and writes unit tests.
-    Also returns the exact shell command required to run the coverage report.
+    The QA Agent. Determines the language framework contextually and writes unit tests,
+    but no longer attempts to execute them locally.
     """
     print("🧪 QA Engineer Agent is writing unit tests...")
-    qa_feedback = f"\n🚨 PREVIOUS TEST FAILED:\n{last_qa_error}\nFix the testing code or terminal command!\n" if last_qa_error else ""
     
     qa_prompt = f"""
     You are the QA Automation Engineer. Modified files: {saved_files}.
-    CURRENT REPOSITORY STRUCTURE:\n{repo_tree}\n{qa_feedback}
+    CURRENT REPOSITORY STRUCTURE:\n{repo_tree}
     
     INSTRUCTIONS:
-    1. Write unit tests for modified code (>80% coverage).
-    2. Provide EXACT terminal command to install dependencies AND run tests with coverage (Do NOT rely on existing package scripts).
-    3. Respond EXACTLY in this format. DO NOT use markdown code blocks (```) inside the file content.
-    4. All the unit test files should be present in a separate folder, other than source or main folder.
-    ---TEST_COMMAND: <your explicit command>---
-    ---FILE: path/to/test.ext---
-    code
+    1. Write comprehensive unit tests for the newly modified or created code.
+    2. Identify the testing framework from the repository tree (e.g., Jest/Vitest for React, PyTest for Python, JUnit for Java) and write tests matching that syntax.
+    3. TEST DISCOVERY: Ensure your generated test file uses standard naming conventions so a test runner can find it later (e.g., appending `.test.jsx`, `.spec.ts`, or prefixing `test_`).
+    
+    Respond EXACTLY in this format. DO NOT use markdown code blocks (```) inside the file content.
+    ---FILE: path/to/test_file.ext---
+    // raw test code here
     ---END---
     """
     qa_raw_text = call_llm(qa_prompt)
     extract_and_save_files(qa_raw_text, repo_path, saved_files)
 
-    # Parse out the dynamic test execution command
-    test_cmd = ""
-    if "---TEST_COMMAND:" in qa_raw_text:
-        test_cmd = qa_raw_text.split("---TEST_COMMAND:")[1].split("---")[0].strip()
-
-    # Fallback Micro-Agent to ensure the loop doesn't crash if the main QA agent forgets to output a command
-    if not test_cmd:
-        print("⚠️ QA Agent forgot the test command. Spinning up Fallback Micro-Agent...")
-        fallback_prompt = f"Repo structure:\n{repo_tree}\nWhat is the standard, single-line terminal command to install testing dependencies and run tests with coverage? Respond ONLY with the raw bash command."
-        test_cmd = call_llm(fallback_prompt, temperature=0.0, timeout=60)
-
-    return test_cmd
-
-def run_reviewer_agent(ticket_id: str, jira_context: str, diff_text: str):
+def run_reviewer_agent(ticket_id: str, jira_context: str, repo_tree: str, diff_text: str):
     """
-    The Reviewer Agent (Tech Lead). Verifies the diffs against the Jira requirements 
-    to prevent scope creep, logic bugs, and incomplete features.
+    The Senior Tech Lead Agent. Performs deep static analysis on the generated code,
+    checking folder structure, linting, DRY principles, and Jira scope alignment.
     """
-    print("🧐 Senior Reviewer Agent is analyzing logic and scope...")
+    print("🧐 Senior Reviewer Agent is performing deep static analysis...")
+    
     reviewer_prompt = f"""
-    You are a strict Expert Senior Code Reviewer and Tech Lead for ticket {ticket_id}.
+    You are the Senior Staff Software Engineer and Tech Lead. 
+    A developer has just submitted code to resolve the following Jira Ticket:
+    TICKET ({ticket_id}):\n{jira_context}
     
-    JIRA TICKET REQUIREMENTS:
-    {jira_context}
+    CURRENT REPOSITORY STRUCTURE:
+    {repo_tree}
     
-    Review these code diffs generated by a developer:
+    SUBMITTED FILES (NEW CODE / DIFFS):
     {diff_text}
     
     INSTRUCTIONS:
-    1. Verify Completeness: Does the code implement EVERY requirement listed in the Jira ticket?
-    2. Verify Scope (No Scope Creep): Does the code stay strictly within the boundaries of the ticket? Flag any unnecessary features or unrelated changes.
-    3. Verify Quality: Look for logic bugs, security flaws, unoptimized code, and bad practices.
+    Perform a DEEP, ruthless static analysis of the submitted code. Evaluate the submission against these 5 pillars:
     
-    - If the code fully satisfies the ticket, has no scope creep, and is structurally sound, respond with EXACTLY: APPROVED
-    - If there are missing features, scope creep, or bugs, provide a strict, numbered list of required fixes for the developer.
+    1. FOLDER STRUCTURE & ARCHITECTURE: Cross-reference the file paths in the SUBMITTED FILES with the CURRENT REPOSITORY STRUCTURE. Did they put the files in the correct place? Did they hallucinate a nested folder (like `src/src/` or `app/app/`)?
+    2. DRY PRINCIPLES & REPETITION: Is there duplicated logic? Could they have reused an existing component or utility?
+    3. LINTING & IMPORTS: Scan the code for missing imports (e.g., React, useState, or external libraries). Are there obvious typos, unused variables, or syntax errors?
+    4. SCOPE CREEP: Does the code strictly solve the Jira ticket without adding unnecessary "gold-plating" or unrelated features?
+    5. TEST VALIDITY: If test files are included, do they actually test the core logic, or are they just dummy assertions (like `expect(1).toBe(1)` or `pass`)?
+    
+    YOUR DECISION:
+    If the code passes ALL checks, respond with EXACTLY the word "APPROVED" on the very first line, followed by a brief summary.
+    If the code fails ANY critical check, respond with EXACTLY the word "REJECTED" on the very first line, followed by a detailed, numbered list of actionable fixes the developer must implement.
+    
+    *Note: Be strict on architecture, bugs, and missing imports, but do not reject for minor stylistic preferences (like single vs. double quotes).*
     """
-    review_text = call_llm(reviewer_prompt, temperature=0.2)
-    # Binary gatekeeping mechanism: Pipeline loop will retry if "APPROVED" is missing
-    return "APPROVED" in review_text.upper(), review_text
+    
+    review_output = call_llm(reviewer_prompt)
+    
+    # Parse the strict approval/rejection flag safely
+    is_approved = review_output.strip().upper().startswith("APPROVED")
+    
+    return is_approved, review_output
