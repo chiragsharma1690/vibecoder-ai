@@ -136,6 +136,7 @@ def generate_qa_command(saved_files: list, repo_tree: str, repo_path: str, last_
     1. Write unit tests for modified code (>80% coverage).
     2. Provide EXACT terminal command to install dependencies AND run tests with coverage (Do NOT rely on existing package scripts).
     3. Respond EXACTLY in this format. DO NOT use markdown code blocks (```) inside the file content.
+    4. All the unit test files should be present in a separate folder, other than source or main folder.
     ---TEST_COMMAND: <your explicit command>---
     ---FILE: path/to/test.ext---
     code

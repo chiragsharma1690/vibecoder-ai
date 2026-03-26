@@ -24,7 +24,7 @@ def _build_current_files_context(workspace: WorkspaceManager, saved_files: list)
     return context
 
 def run_multi_agent_loop(request: ExecuteRequest, session: dict, workspace: WorkspaceManager, 
-                         enable_qa: bool = False, enable_code_review: bool = True):
+                         enable_qa: bool = True, enable_code_review: bool = True):
     """
     The Core Orchestrator: Chains together the Developer, QA, and Reviewer agents in a robust 
     feedback loop. Supports self-healing up to `max_attempts`.
@@ -162,7 +162,7 @@ def background_agent_worker(request: ExecuteRequest, session: dict, workspace: W
         branch_name = workspace.setup_branch(request.ticket_id, base_branch)
         
         # Execute the primary loop
-        saved_files, qa_passed, qa_logs = run_multi_agent_loop(request, session, workspace, enable_qa=False, enable_code_review=True)
+        saved_files, qa_passed, qa_logs = run_multi_agent_loop(request, session, workspace, enable_qa=True, enable_code_review=True)
 
         workspace.ensure_gitignore()
         
