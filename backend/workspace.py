@@ -183,3 +183,9 @@ class WorkspaceManager:
             return response.json().get("html_url")
         print(f"⚠️ PR Creation Failed: {response.text}")
         return None
+    
+    def create_testing_branch(self, current_branch: str):
+        """Creates a dedicated testing branch off the current feature branch."""
+        test_branch = f"{current_branch}-testing"
+        self.run_git_command("checkout", "-b", test_branch)
+        return test_branch

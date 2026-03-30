@@ -188,3 +188,48 @@ def run_reviewer_agent(ticket_id: str, jira_context: str, repo_tree: str, diff_t
     is_approved = review_output.strip().upper().startswith("APPROVED")
     
     return is_approved, review_output
+
+def run_test_engineer_agent(ticket_id: str, repo_tree: str, current_code: str, repo_path: str):
+    """
+    The Test Engineer Agent. Runs after the feature is built.
+    Generates a Markdown test plan, the actual unit tests, and the execution command.
+    """
+    print("🧪 Test Engineer Agent is planning and writing tests...")
+    
+    test_prompt = f"""
+    You are the Lead Test Automation Engineer. 
+    A developer has just completed code for Jira Ticket {ticket_id}.
+    
+    CURRENT REPOSITORY STRUCTURE:
+    {repo_tree}
+    
+    NEWLY IMPLEMENTED CODE:
+    {current_code}
+    
+    INSTRUCTIONS:
+    1. Markdown Test Plan: Generate a `.md` file detailing all possible test cases (positive, negative, edge cases) for the new code.
+    2. Test Code: Write the actual unit test files. Place them in a dedicated testing directory (e.g., `tests/`, `__tests__/`, or mirroring the `src/` folder structure) based on the repository's language.
+    3. Missing Dependencies: If the test runner/framework is missing from the repo, write a chained installation command (e.g., `npm i -D jest && npx jest --coverage`).
+    4. Execution: Provide the EXACT terminal command to run the tests with a text-based coverage report.
+    
+    Respond EXACTLY in this format. DO NOT use markdown code blocks (```) inside the file content.
+    ---TEST_COMMAND: <your explicit command>---
+    ---FILE: test_cases.md---
+    # Unit Test Plan for {ticket_id}
+    ## Scenarios
+    - [ ] Test case 1...
+    ---END---
+    ---FILE: tests/path/to/test_file.ext---
+    // raw test code here
+    ---END---
+    """
+    
+    raw_response = call_llm(test_prompt)
+    saved_files = []
+    extract_and_save_files(raw_response, repo_path, saved_files)
+    
+    test_cmd = ""
+    if "---TEST_COMMAND:" in raw_response:
+        test_cmd = raw_response.split("---TEST_COMMAND:")[1].split("---")[0].strip()
+        
+    return test_cmd, saved_files
