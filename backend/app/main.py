@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from jira import JIRA
 
@@ -6,11 +6,10 @@ from app.schemas.models import ConnectRequest, PlanRequest, ExecuteRequest, Push
 from app.core.session import save_session, load_session
 from app.core.workspace import WorkspaceManager
 from app.agents.architect import generate_architect_plan
-from app.services.pipeline import run_multi_agent_loop, background_agent_worker, async_pr_reviewer_worker, async_test_generation_worker
+from app.services.pipeline import background_agent_worker, run_developer_phase
 
 app = FastAPI(title="VibeCoder Core Runtime API")
 
-# Configure CORS to allow the React frontend to communicate with the backend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], 
@@ -74,10 +73,11 @@ async def execute_plan(request: ExecuteRequest, background_tasks: BackgroundTask
         background_tasks.add_task(background_agent_worker, request, session, workspace)
         return {"status": "async", "message": f"Agent dispatched. PR for {request.ticket_id} will be generated."}
     else:
+        # Sync mode fallback if needed for UI debugging
         base_branch = session.get("base_branch", "main")
         workspace.setup_branch(request.ticket_id, base_branch)
         try:
-            saved_files, qa_passed, qa_logs = run_multi_agent_loop(request, session, workspace)
+            saved_files = run_developer_phase(request, session, workspace)
             return {"status": "success", "files_created": saved_files, "file_diffs": workspace.get_file_diffs(saved_files)}
         except ValueError as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -100,24 +100,6 @@ async def push_code(request: PushRequest):
 
     return {"status": "success", "branch": branch_name}
 
-@app.post("/api/webhooks/github")
-async def github_webhook(request: Request, background_tasks: BackgroundTasks):
-    payload = await request.json()
-    event = request.headers.get("X-GitHub-Event")
-
-    if event == "pull_request":
-        action = payload.get("action")
-        branch_name = payload.get("pull_request", {}).get("head", {}).get("ref", "")
-        
-        if action in ["opened", "synchronize"] and not branch_name.endswith("-testing"):
-            session = load_session()
-            background_tasks.add_task(async_pr_reviewer_worker, payload, session)
-            if action == "opened":
-                background_tasks.add_task(async_test_generation_worker, payload, session)
-
-    return {"status": "received"}
-
 if __name__ == "__main__":
     import uvicorn
-    # Important: Since we are using an 'app' directory, we must pass the module path as a string
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
