@@ -1,12 +1,13 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Request
 from jira import JIRA
 
 from schemas import ConnectRequest, PlanRequest, ExecuteRequest, PushRequest, SetBranchRequest
 from session import save_session, load_session
 from workspace import WorkspaceManager
 from agents import generate_architect_plan
-from pipeline import run_multi_agent_loop, background_agent_worker
+from pipeline import run_multi_agent_loop, background_agent_worker, async_pr_reviewer_worker, async_test_generation_worker
 
 # Initialize the FastAPI App
 app = FastAPI(title="VibeCoder AI API")
@@ -176,6 +177,35 @@ async def push_code(request: PushRequest):
         "message": "Successfully pushed all changes to GitHub!", 
         "branch": branch_name
     }
+
+@app.post("/api/webhooks/github")
+async def github_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Listens for GitHub Webhook events. 
+    Triggers the Async PR Reviewer and the Async Test Engineer when a PR is opened.
+    """
+    payload = await request.json()
+    event = request.headers.get("X-GitHub-Event")
+
+    if event == "pull_request":
+        action = payload.get("action")
+        pr_info = payload.get("pull_request", {})
+        branch_name = pr_info.get("head", {}).get("ref", "")
+        
+        # Guard: Prevent infinite loops! We don't want to review our own test branches
+        if action in ["opened", "synchronize"] and not branch_name.endswith("-testing"):
+            session = load_session()
+            
+            print(f"🔔 Webhook received! PR {action} on branch {branch_name}. Dispatching bots...")
+            
+            # 1. Dispatch the PR Review Bot (runs on new PRs and new commits)
+            background_tasks.add_task(async_pr_reviewer_worker, payload, session)
+            
+            # 2. Dispatch the Test Engineer Bot (only on PR creation to avoid duplicate test branches)
+            if action == "opened":
+                background_tasks.add_task(async_test_generation_worker, payload, session)
+
+    return {"status": "received"}
 
 if __name__ == "__main__":
     import uvicorn

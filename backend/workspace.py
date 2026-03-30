@@ -4,6 +4,7 @@ import subprocess
 import uuid
 import requests
 from urllib.parse import urlparse
+import time
 
 class WorkspaceManager:
     """
@@ -105,17 +106,46 @@ class WorkspaceManager:
 
     def get_available_branches(self):
         """Fetches all remote branches and returns a cleaned, sorted list for the UI dropdown."""
-        self.run_git_command("fetch", "--all")
-        result = self.run_git_command("branch", "-a")
-        if result.returncode != 0: return ["main"]
+        # Use check=False so it doesn't crash if the repo is completely empty
+        self.run_git_command("fetch", "--all", check=False)
+        result = self.run_git_command("branch", "-a", check=False)
+        
+        branches = set()
+        if result.returncode == 0:
+            branches = {line.replace('* ', '').replace('remotes/origin/', '').strip() 
+                        for line in result.stdout.split('\n') if line.strip() and '->' not in line}
             
-        branches = {line.replace('* ', '').replace('remotes/origin/', '').strip() 
-                    for line in result.stdout.split('\n') if line.strip() and '->' not in line}
+        # Empty repository initialization
+        if not branches:
+            print("🌱 Empty repository detected. Initializing 'main' branch with README...")
+            
+            self.run_git_command("checkout", "-b", "main", check=False)
+            readme_path = os.path.join(self.repo_path, "README.md")
+            with open(readme_path, "w", encoding="utf-8") as f:
+                f.write(f"# {self.repo_name}\n\nRepository initialized by VibeCoder AI.")
+            
+            self.run_git_command("add", "README.md", check=False)
+            self.run_git_command("commit", "-m", "Initial commit", check=False)
+            auth_url = self._get_auth_url()
+            self.run_git_command("remote", "set-url", "origin", auth_url, check=False)
+            push_res = self.run_git_command("push", "-u", "origin", "main", check=False)
+            
+            if push_res.returncode != 0:
+                print(f"❌ FAILED TO PUSH INITIAL COMMIT:\n{push_res.stderr}")
+                raise ValueError("Could not push to GitHub. Check your Personal Access Token permissions (it needs 'repo' scope).")
+            else:
+                print("✅ Successfully initialized and pushed 'main' to GitHub!")
+            
+            return ["main"]
             
         branch_list = sorted(list(branches))
-        # Ensure main/master is always at the top of the list
-        if "main" in branch_list: branch_list.insert(0, branch_list.pop(branch_list.index("main")))
-        elif "master" in branch_list: branch_list.insert(0, branch_list.pop(branch_list.index("master")))
+        
+        # Ensure main/master is always at the top of the dropdown list
+        if "main" in branch_list: 
+            branch_list.insert(0, branch_list.pop(branch_list.index("main")))
+        elif "master" in branch_list: 
+            branch_list.insert(0, branch_list.pop(branch_list.index("master")))
+            
         return branch_list
 
     def checkout_base_branch(self, branch_name: str):
@@ -189,3 +219,75 @@ class WorkspaceManager:
         test_branch = f"{current_branch}-testing"
         self.run_git_command("checkout", "-b", test_branch)
         return test_branch
+
+    def wait_for_ci_and_get_logs(self, branch_name: str, timeout_seconds: int = 600) -> dict:
+        """
+        Polls the GitHub REST API to check the status of GitHub Actions for the pushed branch.
+        Returns a dict with 'success' boolean and 'logs' string if it failed.
+        """
+        print(f"☁️ Waiting for GitHub Actions CI to finish on branch '{branch_name}'...")
+        
+        # Extract owner/repo from the github URL 
+        parsed = urlparse(self.repo_url)
+        repo_path = parsed.path.strip("/").replace(".git", "")
+        base_api_url = f"https://api.github.com/repos/{repo_path}/actions/runs"
+        
+        headers = {
+            "Authorization": f"Bearer {self.github_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+
+        start_time = time.time()
+        
+        # Give GitHub a few seconds to register the push and trigger the action
+        time.sleep(10)
+
+        while (time.time() - start_time) < timeout_seconds:
+            try:
+                response = requests.get(f"{base_api_url}?branch={branch_name}", headers=headers)
+                
+                if response.status_code != 200:
+                    print(f"⚠️ Failed to fetch CI status (HTTP {response.status_code}). Assuming success to prevent hanging.")
+                    return {"success": True, "logs": ""}
+
+                runs = response.json().get("workflow_runs", [])
+                if not runs:
+                    time.sleep(15)
+                    continue
+
+                # Get the most recent run for this branch
+                latest_run = runs[0]
+                status = latest_run.get("status")
+                conclusion = latest_run.get("conclusion")
+
+                if status == "completed":
+                    if conclusion == "success":
+                        print("✅ GitHub Actions CI Passed!")
+                        return {"success": True, "logs": ""}
+                    else:
+                        print("❌ GitHub Actions CI Failed! Fetching logs for self-healing...")
+                        
+                        # Fetch the jobs for this run to pinpoint what failed
+                        jobs_url = latest_run.get("jobs_url")
+                        jobs_response = requests.get(jobs_url, headers=headers).json()
+                        
+                        failed_logs = f"Remote CI Pipeline Failed (Conclusion: {conclusion}).\n"
+                        for job in jobs_response.get("jobs", []):
+                            if job.get("conclusion") == "failure":
+                                failed_logs += f"\nFailed Job: {job.get('name')}\n"
+                                for step in job.get("steps", []):
+                                    if step.get("conclusion") == "failure":
+                                        failed_logs += f"Failed Step: {step.get('name')}\n"
+                        
+                        return {"success": False, "logs": failed_logs}
+                
+                # If still queued or in_progress, wait 15 seconds and check again
+                print(f"⏳ CI Status: {status}... waiting 15 seconds.")
+                time.sleep(15)
+                
+            except Exception as e:
+                print(f"⚠️ Error polling GitHub API: {str(e)}")
+                return {"success": True, "logs": ""}
+            
+        print("⚠️ CI Polling timed out. Proceeding pipeline.")
+        return {"success": True, "logs": "Timeout"}

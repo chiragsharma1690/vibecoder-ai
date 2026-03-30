@@ -233,3 +233,72 @@ def run_test_engineer_agent(ticket_id: str, repo_tree: str, current_code: str, r
         test_cmd = raw_response.split("---TEST_COMMAND:")[1].split("---")[0].strip()
         
     return test_cmd, saved_files
+
+def run_devops_agent(repo_tree: str, repo_path: str):
+    """
+    The DevOps Agent. Analyzes the repository structure and generates or updates
+    a GitHub Actions workflow file tailored to the project's tech stack.
+    """
+    print("⚙️ DevOps Agent is configuring the Remote CI/CD Environment...")
+    
+    devops_prompt = f"""
+    You are a Lead DevOps Engineer. We need a GitHub Actions CI pipeline to provide remote feedback for our coding agent.
+    
+    CURRENT REPOSITORY STRUCTURE:
+    {repo_tree}
+    
+    INSTRUCTIONS:
+    1. Analyze the repository structure to determine the primary language and framework (e.g., `package.json` = Node/React, `pom.xml` = Java/Spring Boot, `requirements.txt` = Python).
+    2. Create or update a GitHub Actions workflow file located at `.github/workflows/vibe-ci.yml`.
+    3. The workflow MUST trigger on `push` to branches matching `feature/*`.
+    4. The workflow MUST include steps to:
+       - Checkout the code.
+       - Setup the appropriate runtime environment (e.g., setup-node, setup-java, setup-python).
+       - Install dependencies.
+       - Run a static analysis / linting step (allow it to fail gracefully without stopping the tests if possible).
+       - Run the unit testing suite.
+    
+    Respond EXACTLY in this format. DO NOT use markdown code blocks (```) inside the file content.
+    ---FILE: .github/workflows/vibe-ci.yml---
+    name: VibeCoder CI Feedback
+    # ... your dynamically generated yaml here ...
+    ---END---
+    """
+    
+    raw_response = call_llm(devops_prompt)
+    saved_files = []
+    extract_and_save_files(raw_response, repo_path, saved_files)
+    
+    if saved_files:
+        print(f"✅ DevOps Agent successfully generated CI workflow: {saved_files[0]}")
+    else:
+        print("⚠️ DevOps Agent did not generate a workflow file.")
+        
+    return saved_files
+
+def run_pr_webhook_reviewer(pr_title: str, pr_body: str, diff_text: str):
+    """
+    The Async PR Bot Reviewer. Reads a GitHub diff and generates a 
+    markdown-formatted code review comment to be posted directly on the PR.
+    """
+    print("🤖 PR Bot is analyzing the GitHub diff...")
+    
+    prompt = f"""
+    You are a Senior Staff Engineer reviewing a Pull Request.
+    
+    PR TITLE: {pr_title}
+    PR BODY: {pr_body}
+    
+    GIT DIFF:
+    {diff_text}
+    
+    INSTRUCTIONS:
+    Write a professional, constructive code review comment formatted in Markdown. 
+    1. Acknowledge what was done well.
+    2. Point out any edge cases, performance issues, or logic bugs in the diff.
+    3. Suggest specific improvements if necessary.
+    4. End with a concluding recommendation (e.g., "Looks good to me!" or "Needs a few tweaks before merging.").
+    
+    Do NOT output raw code files. Output ONLY the markdown text for the PR comment.
+    """
+    return call_llm(prompt)
