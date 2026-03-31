@@ -7,6 +7,7 @@ from app.core.workspace import WorkspaceManager
 from app.core.config import MAX_CI_ATTEMPTS
 from app.services.executor import run_shell_command
 from app.agents.developer import run_developer_agent
+from app.agents.reviewer import run_reviewer_agent
 from app.agents.devops import run_devops_agent
 
 def _build_current_files_context(workspace: WorkspaceManager, saved_files: list) -> str:
@@ -19,7 +20,8 @@ def _build_current_files_context(workspace: WorkspaceManager, saved_files: list)
                 context += f"---FILE: {f_path}---\n{f.read()}\n---END---\n"
     return context
 
-def run_developer_phase(request: ExecuteRequest, session: dict, workspace: WorkspaceManager, ci_feedback: str = ""):
+def run_multi_agent_loop(request: ExecuteRequest, session: dict, workspace: WorkspaceManager, ci_feedback: str = ""):
+    """The Inner Loop: Developer writes code -> Local Reviewer checks it."""
     jira_client = JIRA(server=session["jira_url"], basic_auth=(session["jira_user"], session["jira_token"]))
     issue = jira_client.issue(request.ticket_id)
     jira_context = f"Summary: {issue.fields.summary}\nDescription: {issue.fields.description}"
@@ -32,7 +34,7 @@ def run_developer_phase(request: ExecuteRequest, session: dict, workspace: Works
             success, output = run_shell_command(cmd, workspace.repo_path, timeout=300)
             setup_logs += f"\n$ {cmd}\n{output}\n"
 
-    developer_prompt = f"""
+    base_developer_prompt = f"""
     You are the Lead Developer Agent. Implement this approved plan.
     JIRA TICKET:\n{jira_context}
     APPROVED PLAN:\n{json.dumps(request.plan, indent=2)}
@@ -49,16 +51,40 @@ def run_developer_phase(request: ExecuteRequest, session: dict, workspace: Works
     ---END---
     """
     
+    developer_prompt = base_developer_prompt
     saved_files = []
-    try:
-        run_developer_agent(developer_prompt, workspace.repo_path, saved_files)
-        if not saved_files: raise ValueError("Developer Agent failed to generate files.")
-    except ValueError as e:
-        print(f"⚠️ Developer Phase Failed: {e}")
-        
-    return saved_files
+    pipeline_logs = []
+
+    # LOCAL INNER LOOP (Max 3 bounces back and forth)
+    for attempt in range(1, 4):
+        print(f"\n🔄 --- LOCAL INNER LOOP ATTEMPT {attempt}/3 ---")
+        try:
+            run_developer_agent(developer_prompt, workspace.repo_path, saved_files)
+            if not saved_files: raise ValueError("Developer Agent failed to generate files.")
+        except ValueError as e:
+            print(f"⚠️ Developer Phase Failed: {e}")
+            pipeline_logs.append(f"Developer Error: {str(e)}")
+            developer_prompt = base_developer_prompt + f"\n\n🚨 URGENT: Previous attempt failed ({e})."
+            continue
+
+        # FIRST LINE OF DEFENSE: Local Code Review
+        diff_text = "".join([f"\n--- FILE: {d['file']} ---\nNEW CODE:\n{d['new_content']}\n" for d in workspace.get_file_diffs(saved_files)])
+        is_approved, review_text = run_reviewer_agent(request.ticket_id, jira_context, workspace.get_repo_tree(), diff_text)
+        pipeline_logs.append(f"Local Code Review: {review_text}")
+
+        if not is_approved:
+            print("⚠️ Local Reviewer caught issues! Bouncing back to Developer...")
+            current_code = _build_current_files_context(workspace, saved_files)
+            developer_prompt = base_developer_prompt + current_code + f"\n\n🚨 LOCAL CODE REVIEW REJECTED:\n{review_text}"
+            continue 
+            
+        print("✅ Local Reviewer approved the code! Ready for remote push.")
+        break
+
+    return saved_files, pipeline_logs
 
 def background_agent_worker(request: ExecuteRequest, session: dict, workspace: WorkspaceManager):
+    """The Outer Loop: Dev/Review Loop -> Push -> GitHub Actions CI -> Self-Heal."""
     try:
         base_branch = session.get("base_branch", "main")
         branch_name = workspace.setup_branch(request.ticket_id, base_branch)
@@ -69,11 +95,12 @@ def background_agent_worker(request: ExecuteRequest, session: dict, workspace: W
         ci_feedback = ""
         ci_success = True
         
+        # REMOTE OUTER LOOP
         for ci_attempt in range(1, MAX_CI_ATTEMPTS + 1):
-            print(f"\n🚀 === CI PIPELINE ATTEMPT {ci_attempt}/{MAX_CI_ATTEMPTS} ===")
+            print(f"\n🚀 === REMOTE CI PIPELINE ATTEMPT {ci_attempt}/{MAX_CI_ATTEMPTS} ===")
             
-            # 1. Developer generates code based on plan (and optional CI feedback)
-            saved_files = run_developer_phase(request, session, workspace, ci_feedback=ci_feedback)
+            # 1. Trigger the Local Inner Loop (Develop -> Local Review)
+            saved_files, _ = run_multi_agent_loop(request, session, workspace, ci_feedback=ci_feedback)
             
             # 2. Push to GitHub to trigger remote pipeline
             workspace.ensure_gitignore()
@@ -98,8 +125,8 @@ def background_agent_worker(request: ExecuteRequest, session: dict, workspace: W
                     current_code = _build_current_files_context(workspace, saved_files)
                     ci_feedback = f"\n\n🚨 REMOTE CI FAILED:\n{ci_result['logs']}\n{current_code}"
 
-        # 4. Open PR (This wakes up your standalone Reviewer and Tester bots via GitHub Webhooks!)
-        pr_body = f"### 🤖 VibeCoder Implementation\nResolves: **{request.ticket_id}**\nCI Passed: {'✅' if ci_success else '❌'}"
+        # 4. Open PR (This wakes up your standalone PR Bot and Tester Bot via GitHub Webhooks!)
+        pr_body = f"### 🤖 VibeCoder Implementation\nResolves: **{request.ticket_id}**\nLocal Review Passed: ✅\nCI Passed: {'✅' if ci_success else '❌'}"
         pr_url = workspace.create_pull_request(branch_name, base_branch, f"Feature: {request.ticket_id}", pr_body)
         print(f"✨ FEATURE PR OPENED: {pr_url}")
         

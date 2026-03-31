@@ -6,7 +6,7 @@ from app.schemas.models import ConnectRequest, PlanRequest, ExecuteRequest, Push
 from app.core.session import save_session, load_session
 from app.core.workspace import WorkspaceManager
 from app.agents.architect import generate_architect_plan
-from app.services.pipeline import background_agent_worker, run_developer_phase
+from app.services.pipeline import background_agent_worker, run_multi_agent_loop
 
 app = FastAPI(title="VibeCoder Core Runtime API")
 
@@ -77,7 +77,7 @@ async def execute_plan(request: ExecuteRequest, background_tasks: BackgroundTask
         base_branch = session.get("base_branch", "main")
         workspace.setup_branch(request.ticket_id, base_branch)
         try:
-            saved_files = run_developer_phase(request, session, workspace)
+            saved_files, pipeline_logs = run_multi_agent_loop(request, session, workspace)
             return {"status": "success", "files_created": saved_files, "file_diffs": workspace.get_file_diffs(saved_files)}
         except ValueError as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -99,7 +99,3 @@ async def push_code(request: PushRequest):
         raise HTTPException(status_code=500, detail="Failed to push to GitHub.")
 
     return {"status": "success", "branch": branch_name}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
