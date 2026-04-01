@@ -7,6 +7,7 @@ from app.core.session import save_session, load_session
 from app.core.workspace import WorkspaceManager
 from app.agents.architect import generate_architect_plan
 from app.services.pipeline import background_agent_worker, run_multi_agent_loop
+from app.routers import webhooks
 
 app = FastAPI(title="VibeCoder Core Runtime API")
 
@@ -17,6 +18,8 @@ app.add_middleware(
     allow_methods=["*"], 
     allow_headers=["*"],
 )
+
+app.include_router(webhooks.router)
 
 @app.get("/")
 async def health_check():
