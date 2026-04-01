@@ -16,4 +16,5 @@ export const apiService = {
   generatePlan: (data: { ticket_id: string; feedback?: string; previous_plan?: any }) => apiClient.post('/chat/plan', data),
   executePlan: (data: { ticket_id: string; plan: any; async_mode: boolean }) => apiClient.post('/chat/execute', data),
   pushCode: (data: { ticket_id: string }) => apiClient.post('/chat/push', data),
+  linkSlack: (data: { slack_user_id: string }) => apiClient.post('/webhooks/slack/link', data),
 };

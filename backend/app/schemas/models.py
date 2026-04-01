@@ -28,3 +28,6 @@ class PushRequest(BaseModel):
 class CreateTicketRequest(BaseModel):
     summary: str
     description: str
+
+class LinkSlackRequest(BaseModel):
+    slack_user_id: str
