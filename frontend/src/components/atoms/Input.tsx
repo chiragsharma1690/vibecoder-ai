@@ -10,19 +10,19 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ label, error, className, ...props }, ref) => {
     return (
       <div className="flex flex-col gap-1.5 w-full">
-        {label && <label className="text-xs font-medium text-zinc-400">{label}</label>}
+        {label && <label className="text-xs font-medium text-gray-600 dark:text-zinc-400">{label}</label>}
         <input
           ref={ref}
           className={cn(
-            "w-full bg-zinc-900/50 border rounded-lg px-4 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 transition-all duration-200 focus:outline-none focus:ring-2",
+            "w-full bg-white dark:bg-zinc-900/50 border rounded-lg px-4 py-2 text-sm text-gray-900 dark:text-zinc-100 placeholder:text-gray-400 dark:placeholder:text-zinc-600 transition-all duration-200 focus:outline-none focus:ring-2",
             error 
-              ? "border-red-900 focus:border-red-500 focus:ring-red-500/20" 
-              : "border-zinc-800 focus:border-zinc-600 focus:ring-zinc-600/20",
+              ? "border-red-500 dark:border-red-900 focus:border-red-500 focus:ring-red-500/20" 
+              : "border-gray-300 dark:border-zinc-800 focus:border-indigo-500 dark:focus:border-zinc-600 focus:ring-indigo-500/20 dark:focus:ring-zinc-600/20",
             className
           )}
           {...props}
         />
-        {error && <span className="text-[11px] text-red-400">{error}</span>}
+        {error && <span className="text-[11px] text-red-500 dark:text-red-400">{error}</span>}
       </div>
     );
   }

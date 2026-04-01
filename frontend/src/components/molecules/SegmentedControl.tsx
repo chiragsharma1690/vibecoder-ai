@@ -14,7 +14,10 @@ interface SegmentedControlProps {
 
 export const SegmentedControl = ({ options, value, onChange, disabled }: SegmentedControlProps) => {
   return (
-    <div className={cn("flex p-1 space-x-1 bg-zinc-900/80 border border-zinc-800 rounded-lg w-fit", disabled && "opacity-50 pointer-events-none")}>
+    <div className={cn(
+      "flex p-1 space-x-1 bg-gray-100 dark:bg-zinc-900/80 border border-gray-200 dark:border-zinc-800 rounded-lg w-fit transition-colors duration-300", 
+      disabled && "opacity-50 pointer-events-none"
+    )}>
       {options.map((opt) => (
         <button
           key={opt.value}
@@ -23,8 +26,8 @@ export const SegmentedControl = ({ options, value, onChange, disabled }: Segment
           className={cn(
             "px-4 py-1.5 text-xs font-medium rounded-md transition-all duration-200",
             value === opt.value
-              ? "bg-zinc-800 text-zinc-100 shadow-sm border border-zinc-700/50"
-              : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50 border border-transparent"
+              ? "bg-white dark:bg-zinc-800 text-gray-900 dark:text-zinc-100 shadow-sm border border-gray-200 dark:border-zinc-700/50"
+              : "text-gray-500 hover:text-gray-900 hover:bg-gray-200/50 dark:text-zinc-500 dark:hover:text-zinc-300 dark:hover:bg-zinc-800/50 border border-transparent"
           )}
         >
           {opt.label}

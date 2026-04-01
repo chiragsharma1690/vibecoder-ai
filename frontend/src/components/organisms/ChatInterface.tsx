@@ -11,9 +11,7 @@ import { Button } from '../atoms/Button';
 export const ChatInterface = () => {
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = localStorage.getItem('vibeCoderChat');
-    if (saved) {
-      return JSON.parse(saved);
-    }
+    if (saved) return JSON.parse(saved);
     return [{ role: 'bot', type: 'text', content: 'System initialized. How can I help you build today?' }];
   });
   
@@ -21,8 +19,8 @@ export const ChatInterface = () => {
   const [ticketId, setTicketId] = useState('');
   const [summary, setSummary] = useState('');
   const [description, setDescription] = useState('');
-  
   const [isProcessing, setIsProcessing] = useState(false);
+  
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -31,24 +29,23 @@ export const ChatInterface = () => {
   }, [messages]);
 
   const clearChat = () => {
-    const defaultMsg: Message = { role: 'bot', type: 'text', content: 'System initialized. How can I help you build today?' };
-    setMessages([defaultMsg]);
+    setMessages([{ role: 'bot', type: 'text', content: 'System initialized. How can I help you build today?' }]);
     localStorage.removeItem('vibeCoderChat');
   };
+
+  const hasActiveWorkflow = messages.some(msg => msg.type === 'plan' || msg.type === 'action' || (msg.role === 'system' && isProcessing));
 
   const addMessage = (msg: Message) => setMessages(prev => [...prev, msg]);
 
   const handleStartDevelopment = async (e: FormEvent) => {
     e.preventDefault();
     if (isProcessing) return;
-
     setIsProcessing(true);
     let activeTicketId = ticketId.trim();
 
     try {
       if (mode === 'new') {
         if (!summary.trim() || !description.trim()) throw new Error("Summary and Description are required.");
-        
         addMessage({ role: 'user', type: 'text', content: `Create new feature:\n${summary}\n\n${description}` });
         addMessage({ role: 'system', type: 'text', content: 'Creating new Jira ticket...' });
         
@@ -75,7 +72,7 @@ export const ChatInterface = () => {
     }
   };
 
-  const handleModifyPlan = async (targetTicketId: string, previousPlan: any, feedback: string) => { /* Same as before */
+  const handleModifyPlan = async (targetTicketId: string, previousPlan: any, feedback: string) => {
     if (isProcessing || !feedback.trim()) return;
     setIsProcessing(true);
     addMessage({ role: 'user', type: 'text', content: `Feedback: ${feedback}` });
@@ -91,7 +88,7 @@ export const ChatInterface = () => {
     }
   };
 
-  const handleExecute = async (targetTicketId: string, plan: any, asyncMode: boolean) => { /* Same as before */
+  const handleExecute = async (targetTicketId: string, plan: any, asyncMode: boolean) => {
     if (isProcessing) return;
     setIsProcessing(true);
     addMessage({ role: 'system', type: 'text', content: asyncMode ? `Dispatching AI for ${targetTicketId}...` : `Writing code locally for ${targetTicketId}...` });
@@ -110,7 +107,7 @@ export const ChatInterface = () => {
     }
   };
 
-  const handlePush = async (targetTicketId: string) => { /* Same as before */
+  const handlePush = async (targetTicketId: string) => {
     if (isProcessing) return;
     setIsProcessing(true);
     addMessage({ role: 'system', type: 'text', content: `Pushing to GitHub...` });
@@ -126,83 +123,88 @@ export const ChatInterface = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950 w-full rounded-2xl overflow-hidden border border-zinc-800/50 shadow-2xl relative">
+    <div className="flex flex-col h-full bg-white dark:bg-zinc-950 w-full rounded-2xl overflow-hidden border border-gray-200 dark:border-zinc-800/50 shadow-xl dark:shadow-2xl transition-colors duration-300">
       
-      {/* A subtle Clear Chat button at the top */}
-      <div className="absolute top-4 right-6 z-10">
+      {/* Header Actions */}
+      <div className="flex justify-end p-4 border-b border-gray-100 dark:border-zinc-800/50 bg-gray-50 dark:bg-zinc-950 transition-colors duration-300">
         <button 
           onClick={clearChat}
-          className="p-2 bg-zinc-900/80 border border-zinc-800 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg shadow-sm backdrop-blur-sm transition-all flex items-center gap-2 text-xs font-medium"
+          className="p-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 text-gray-500 dark:text-zinc-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg shadow-sm transition-all flex items-center gap-2 text-xs font-medium"
         >
           <Trash2 size={14} /> Clear History
         </button>
       </div>
-      
+
       {/* Scrollable Chat Area */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-8 pb-48 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
         {messages.map((msg, idx) => (
-          <ChatMessage key={idx} msg={msg} isProcessing={isProcessing} onExecute={handleExecute} onModify={handleModifyPlan} onPush={handlePush} />
+          <ChatMessage 
+            key={idx} 
+            msg={msg} 
+            isProcessing={isProcessing && idx === messages.length - 1} 
+            onExecute={handleExecute} 
+            onModify={handleModifyPlan} 
+            onPush={handlePush} 
+          />
         ))}
         <div ref={chatEndRef} />
       </div>
 
-      {/* Floating Prompt Input Box */}
-      <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-zinc-950 via-zinc-950/90 to-transparent pt-12">
-        <div className="max-w-3xl mx-auto bg-zinc-900/90 backdrop-blur-md border border-zinc-800 rounded-xl p-4 shadow-2xl transition-all">
-          
-          <div className="mb-4">
-            <SegmentedControl 
-              options={[
-                { label: 'Existing Ticket', value: 'existing' },
-                { label: 'Create New Feature', value: 'new' }
-              ]} 
-              value={mode} 
-              onChange={(val) => setMode(val as 'existing' | 'new')} 
-              disabled={isProcessing}
-            />
-          </div>
+      {/* Input Box - Hides when workflow is active */}
+      {!hasActiveWorkflow && (
+        <div className="p-6 bg-gray-50 dark:bg-zinc-900 border-t border-gray-200 dark:border-zinc-800 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] dark:shadow-[0_-10px_40px_rgba(0,0,0,0.2)] transition-colors duration-300">
+          <div className="max-w-3xl mx-auto">
+            <div className="mb-4">
+              <SegmentedControl 
+                options={[
+                  { label: 'Existing Ticket', value: 'existing' },
+                  { label: 'Create New Feature', value: 'new' }
+                ]} 
+                value={mode} 
+                onChange={(val) => setMode(val as 'existing' | 'new')} 
+                disabled={isProcessing}
+              />
+            </div>
 
-          <form onSubmit={handleStartDevelopment}>
-            {mode === 'existing' ? (
-              <div className="relative flex items-center">
-                <input 
-                  type="text" 
-                  value={ticketId} 
-                  onChange={(e) => setTicketId(e.target.value)} 
-                  disabled={isProcessing} 
-                  placeholder="Enter Jira Ticket ID (e.g., KAN-123)..." 
-                  className="w-full bg-transparent border-none py-2 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-0 text-sm" 
-                />
-                <Button type="submit" size="sm" disabled={!ticketId.trim() || isProcessing} icon={<Send size={14} />} />
-              </div>
-            ) : (
-              <div className="flex flex-col gap-3">
-                <Input 
-                  value={summary} 
-                  onChange={(e) => setSummary(e.target.value)} 
-                  disabled={isProcessing} 
-                  placeholder="Feature summary (e.g. Add dark mode toggle)" 
-                  className="bg-zinc-950/50"
-                />
-                <TextArea 
-                  value={description} 
-                  onChange={(e) => setDescription(e.target.value)} 
-                  disabled={isProcessing} 
-                  placeholder="Describe the implementation details for the AI..." 
-                  rows={2}
-                  className="bg-zinc-950/50"
-                />
-                <div className="flex justify-end mt-2">
-                  <Button type="submit" disabled={!summary.trim() || !description.trim() || isProcessing} icon={<Send size={14} />}>
-                    Generate
-                  </Button>
+            <form onSubmit={handleStartDevelopment}>
+              {mode === 'existing' ? (
+                <div className="relative flex items-center bg-white dark:bg-zinc-950/50 rounded-lg border border-gray-300 dark:border-zinc-800 p-1 transition-colors duration-300">
+                  <input 
+                    type="text" 
+                    value={ticketId} 
+                    onChange={(e) => setTicketId(e.target.value)} 
+                    disabled={isProcessing} 
+                    placeholder="Enter Jira Ticket ID (e.g., KAN-123)..." 
+                    className="w-full bg-transparent border-none px-4 py-2 text-gray-900 dark:text-zinc-100 placeholder:text-gray-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-0 text-sm" 
+                  />
+                  <Button type="submit" size="sm" disabled={!ticketId.trim() || isProcessing} icon={<Send size={14} />} />
                 </div>
-              </div>
-            )}
-          </form>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <Input 
+                    value={summary} 
+                    onChange={(e) => setSummary(e.target.value)} 
+                    disabled={isProcessing} 
+                    placeholder="Feature summary (e.g. Add dark mode toggle)" 
+                  />
+                  <TextArea 
+                    value={description} 
+                    onChange={(e) => setDescription(e.target.value)} 
+                    disabled={isProcessing} 
+                    placeholder="Describe the implementation details for the AI..." 
+                    rows={2}
+                  />
+                  <div className="flex justify-end mt-2">
+                    <Button type="submit" disabled={!summary.trim() || !description.trim() || isProcessing} icon={<Send size={14} />}>
+                      Generate
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </form>
+          </div>
         </div>
-      </div>
-
+      )}
     </div>
   );
 };
