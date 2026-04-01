@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, FormEvent } from 'react';
-import { Send } from 'lucide-react';
+import { Send, Trash2 } from 'lucide-react';
 import { apiService } from '../../services/api';
 import { ChatMessage } from './ChatMessage';
 import { Message } from '../../types';
@@ -9,9 +9,13 @@ import { TextArea } from '../atoms/TextArea';
 import { Button } from '../atoms/Button';
 
 export const ChatInterface = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    { role: 'bot', type: 'text', content: 'System initialized. How can I help you build today?' }
-  ]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const saved = localStorage.getItem('vibeCoderChat');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+    return [{ role: 'bot', type: 'text', content: 'System initialized. How can I help you build today?' }];
+  });
   
   const [mode, setMode] = useState<'existing' | 'new'>('existing');
   const [ticketId, setTicketId] = useState('');
@@ -22,8 +26,15 @@ export const ChatInterface = () => {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    localStorage.setItem('vibeCoderChat', JSON.stringify(messages));
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  const clearChat = () => {
+    const defaultMsg: Message = { role: 'bot', type: 'text', content: 'System initialized. How can I help you build today?' };
+    setMessages([defaultMsg]);
+    localStorage.removeItem('vibeCoderChat');
+  };
 
   const addMessage = (msg: Message) => setMessages(prev => [...prev, msg]);
 
@@ -116,6 +127,16 @@ export const ChatInterface = () => {
 
   return (
     <div className="flex flex-col h-full bg-zinc-950 w-full rounded-2xl overflow-hidden border border-zinc-800/50 shadow-2xl relative">
+      
+      {/* A subtle Clear Chat button at the top */}
+      <div className="absolute top-4 right-6 z-10">
+        <button 
+          onClick={clearChat}
+          className="p-2 bg-zinc-900/80 border border-zinc-800 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg shadow-sm backdrop-blur-sm transition-all flex items-center gap-2 text-xs font-medium"
+        >
+          <Trash2 size={14} /> Clear History
+        </button>
+      </div>
       
       {/* Scrollable Chat Area */}
       <div className="flex-1 overflow-y-auto p-6 space-y-8 pb-48 custom-scrollbar">

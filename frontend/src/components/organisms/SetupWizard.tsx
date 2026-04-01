@@ -6,7 +6,7 @@ import { Input } from '../atoms/Input';
 import { Button } from '../atoms/Button';
 
 interface SetupWizardProps {
-  onConnect: (workspaceInfo: string) => void;
+  onConnect: (workspaceInfo: string, branch: string, formData: ConnectFormData) => void;
 }
 
 export const SetupWizard = ({ onConnect }: SetupWizardProps) => {
@@ -38,6 +38,9 @@ export const SetupWizard = ({ onConnect }: SetupWizardProps) => {
       const response = await apiService.connectWorkspace(formData);
       localStorage.setItem('vibeCoderCreds', JSON.stringify(formData));
       
+      const base64Session = btoa(JSON.stringify(formData));
+      document.cookie = `vibecoder_session=${base64Session}; path=/; max-age=86400; SameSite=Strict`;
+      
       setAvailableBranches(response.data.branches);
       setSelectedBranch(response.data.branches[0] || 'main');
       setStep(2);
@@ -55,8 +58,8 @@ export const SetupWizard = ({ onConnect }: SetupWizardProps) => {
 
     try {
       await apiService.setBranch({ branch_name: selectedBranch });
-      const repoName = formData.repo_url.split('/').pop()?.replace('.git', '') || 'workspace';
-      onConnect(`${repoName} (${selectedBranch})`);
+      const repoName = formData.repo_url.split('/').pop()?.replace('.git', '') || 'workspace';      
+      onConnect(`${repoName} (${selectedBranch})`, selectedBranch, formData);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to checkout branch.');
     } finally {
