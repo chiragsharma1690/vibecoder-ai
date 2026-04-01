@@ -1,32 +1,31 @@
 import { useState } from 'react';
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
 import { FileCode, ChevronDown, ChevronUp } from 'lucide-react';
+import { FileDiff } from '../../types';
+import { Badge } from '../atoms/Badge';
 
-export default function DiffCard({ diffs }) {
-  // Keep track of which files are expanded in the UI
-  const [expandedFiles, setExpandedFiles] = useState(
-    // Default to expanding the first file
+export const DiffCard = ({ diffs }: { diffs: FileDiff[] }) => {
+  const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>(
     diffs.reduce((acc, curr, idx) => ({ ...acc, [curr.file]: idx === 0 }), {})
   );
 
-  const toggleFile = (filename) => {
+  const toggleFile = (filename: string) => {
     setExpandedFiles(prev => ({ ...prev, [filename]: !prev[filename] }));
   };
 
-  // Custom styling for the diff viewer to match our dark theme
   const customStyles = {
     variables: {
       dark: {
-        diffViewerBackground: '#0f172a', // slate-900
-        diffViewerColor: '#cbd5e1', // slate-300
+        diffViewerBackground: '#09090b', // zinc-950
+        diffViewerColor: '#d4d4d8', // zinc-300
         addedBackground: '#064e3b', // emerald-900
         addedColor: '#34d399', // emerald-400
         removedBackground: '#7f1d1d', // red-900
         removedColor: '#f87171', // red-400
         wordAddedBackground: '#047857', // emerald-700
         wordRemovedBackground: '#991b1b', // red-800
-        lineNumberColor: '#475569', // slate-600
-        emptyLineBackground: '#1e293b', // slate-800
+        lineNumberColor: '#52525b', // zinc-600
+        emptyLineBackground: '#18181b', // zinc-900
       }
     }
   };
@@ -34,33 +33,27 @@ export default function DiffCard({ diffs }) {
   if (!diffs || diffs.length === 0) return null;
 
   return (
-    <div className="mt-4 space-y-4 w-full max-w-4xl">
+    <div className="mt-4 space-y-4 w-full max-w-4xl animate-fade-in">
       {diffs.map((diff, index) => {
         const isExpanded = expandedFiles[diff.file];
         const isNewFile = !diff.old_content && diff.new_content;
 
         return (
-          <div key={index} className="bg-slate-900 border border-slate-700 rounded-lg overflow-hidden shadow-lg">
-            {/* File Header (Clickable to expand/collapse) */}
+          <div key={index} className="bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-lg">
             <button 
               onClick={() => toggleFile(diff.file)}
-              className="w-full flex items-center justify-between p-3 bg-slate-800/80 hover:bg-slate-700/80 transition-colors border-b border-slate-700"
+              className="w-full flex items-center justify-between p-3 bg-zinc-900/50 hover:bg-zinc-800/50 transition-colors border-b border-zinc-800"
             >
-              <div className="flex items-center gap-2">
-                <FileCode size={18} className={isNewFile ? "text-emerald-400" : "text-blue-400"} />
-                <span className="font-mono text-sm text-slate-200">{diff.file}</span>
-                {isNewFile && (
-                  <span className="text-[10px] uppercase font-bold bg-emerald-900/50 text-emerald-400 px-2 py-0.5 rounded ml-2">
-                    New File
-                  </span>
-                )}
+              <div className="flex items-center gap-3">
+                <FileCode size={18} className={isNewFile ? "text-emerald-400" : "text-indigo-400"} />
+                <span className="font-mono text-sm text-zinc-300">{diff.file}</span>
+                {isNewFile && <Badge variant="success">New File</Badge>}
               </div>
-              {isExpanded ? <ChevronUp size={18} className="text-slate-400" /> : <ChevronDown size={18} className="text-slate-400" />}
+              {isExpanded ? <ChevronUp size={18} className="text-zinc-500" /> : <ChevronDown size={18} className="text-zinc-500" />}
             </button>
 
-            {/* Diff Viewer Body */}
             {isExpanded && (
-              <div className="text-xs overflow-x-auto">
+              <div className="text-xs overflow-x-auto custom-scrollbar">
                 <ReactDiffViewer
                   oldValue={diff.old_content}
                   newValue={diff.new_content}
@@ -78,4 +71,4 @@ export default function DiffCard({ diffs }) {
       })}
     </div>
   );
-}
+};

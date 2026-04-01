@@ -9,6 +9,7 @@ dependencies = [
     "jira>=3.10.5",
     "ollama>=0.6.1",
     "pydantic>=2.12.5",
+    "python-multipart>=0.0.22",
     "requests>=2.33.0",
     "uvicorn>=0.42.0",
 ]
