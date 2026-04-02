@@ -96,7 +96,9 @@ async def slack_webhook(
     # Create the Jira Ticket
     try:
         jira_client = JIRA(server=session_data["jira_url"], basic_auth=(session_data["jira_user"], session_data["jira_token"]))
-        summary = feature_description[:50] + ("..." if len(feature_description) > 50 else "")
+        
+        first_line = feature_description.split('\n')[0].strip()
+        summary = first_line[:50] + ("..." if len(first_line) > 50 else "")
         issue_dict = {
             'project': {'key': session_data["jira_project_key"]},
             'summary': f"Slack Req: {summary}",

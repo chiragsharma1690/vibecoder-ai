@@ -1,16 +1,23 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from jira import JIRA
+from contextlib import asynccontextmanager
 
 from app.schemas.models import ConnectRequest, PlanRequest, ExecuteRequest, PushRequest, SetBranchRequest, CreateTicketRequest
 from app.core.workspace import WorkspaceManager
 from app.agents.architect import generate_architect_plan
 from app.services.pipeline import background_agent_worker, run_multi_agent_loop
+from app.core.database import init_db
 
 from app.core.dependencies import get_current_session
 from app.routers import webhooks
 
-app = FastAPI(title="VibeCoder Core Runtime API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+app = FastAPI(title="VibeCoder Core Runtime API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
