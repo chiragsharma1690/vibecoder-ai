@@ -2,10 +2,11 @@ import os
 import ollama
 import concurrent.futures
 from app.core.config import DEFAULT_LLM_MODEL, LLM_TIMEOUT_SECONDS
+from app.constants.core import LLM_TEMPERATURE, LLM_CONTEXT_WINDOW
 
-def call_llm(prompt: str, format_type=None, temperature=0.1, model=DEFAULT_LLM_MODEL, timeout=LLM_TIMEOUT_SECONDS):
+def call_llm(prompt: str, format_type=None, temperature=LLM_TEMPERATURE, model=DEFAULT_LLM_MODEL, timeout=LLM_TIMEOUT_SECONDS):
     """Standardized wrapper for all Ollama LLM requests."""
-    options = {"temperature": temperature, "num_ctx": 8192}
+    options = {"temperature": temperature, "num_ctx": LLM_CONTEXT_WINDOW}
     
     def _generate(): 
         return ollama.generate(model=model, prompt=prompt, format=format_type, options=options)

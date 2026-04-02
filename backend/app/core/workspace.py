@@ -6,8 +6,10 @@ import requests
 import time
 from urllib.parse import urlparse
 
+from app.constants.core import DEFAULT_WORKSPACE_DIR, IGNORE_DIRS, DEFAULT_GITIGNORE_RULES, DEFAULT_BASE_BRANCH
+
 class WorkspaceManager:
-    def __init__(self, repo_url: str, github_token: str, base_dir: str = "workspaces"):
+    def __init__(self, repo_url: str, github_token: str, base_dir: str = DEFAULT_WORKSPACE_DIR):
         self.repo_url = repo_url
         self.github_token = github_token
         self.base_dir = os.path.abspath(base_dir)
@@ -40,10 +42,9 @@ class WorkspaceManager:
         return subprocess.run(cmd, cwd=self.repo_path if os.path.exists(self.repo_path) else None, check=check, capture_output=True, text=True)
 
     def get_repo_tree(self, max_lines=200, max_depth=3):
-        ignore_dirs = {'.git', 'node_modules', '__pycache__', 'dist', 'build', '.venv', '.agent', '.idea', '.vscode'}
         tree = []
         for root, dirs, files in os.walk(self.repo_path):
-            dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith('.')]
+            dirs[:] = [d for d in dirs if d not in IGNORE_DIRS and not d.startswith('.')]
             level = root.replace(self.repo_path, "").count(os.sep)
             if level > max_depth:
                 dirs[:] = [] 
@@ -84,7 +85,7 @@ class WorkspaceManager:
         self.run_git_command("pull", "origin", branch_name)
         return branch_name
 
-    def setup_branch(self, ticket_id: str, base_branch: str = "main"):
+    def setup_branch(self, ticket_id: str, base_branch: str = DEFAULT_BASE_BRANCH):
         branch_name = f"feature/{ticket_id.upper()}-{uuid.uuid4().hex[:6]}"
         self.run_git_command("checkout", base_branch)
         self.run_git_command("pull", "origin", base_branch)
@@ -103,12 +104,13 @@ class WorkspaceManager:
 
     def ensure_gitignore(self):
         gitignore_path = os.path.join(self.repo_path, ".gitignore")
-        ignore_rules = ["node_modules/", "dist/", "build/", ".env", "__pycache__/", ".DS_Store", ".agent/"]
         if not os.path.exists(gitignore_path):
-            with open(gitignore_path, "w", encoding="utf-8") as f: f.write("\n".join(ignore_rules) + "\n")
+            with open(gitignore_path, "w", encoding="utf-8") as f: f.write("\n".join(DEFAULT_GITIGNORE_RULES) + "\n")
             return
+            
         with open(gitignore_path, "r", encoding="utf-8") as f: existing_rules = f.read().splitlines()
-        missing_rules = [rule for rule in ignore_rules if rule not in existing_rules]
+        missing_rules = [rule for rule in DEFAULT_GITIGNORE_RULES if rule not in existing_rules]
+        
         if missing_rules:
             with open(gitignore_path, "a", encoding="utf-8") as f: f.write("\n# VibeCoder Auto-Ignores\n" + "\n".join(missing_rules) + "\n")
 
