@@ -7,6 +7,7 @@ class ConnectRequest(BaseModel):
     jira_token: str
     repo_url: str
     github_token: str
+    jira_project_key: str
 
 class SetBranchRequest(BaseModel):
     branch_name: str
@@ -23,3 +24,10 @@ class ExecuteRequest(BaseModel):
 
 class PushRequest(BaseModel):
     ticket_id: str
+
+class CreateTicketRequest(BaseModel):
+    summary: str
+    description: str
+
+class LinkSlackRequest(BaseModel):
+    slack_user_id: str

@@ -9,6 +9,8 @@ from app.services.executor import run_shell_command
 from app.agents.developer import run_developer_agent
 from app.agents.reviewer import run_reviewer_agent
 from app.agents.devops import run_devops_agent
+from app.agents.architect import generate_architect_plan
+
 
 def _build_current_files_context(workspace: WorkspaceManager, saved_files: list) -> str:
     if not saved_files: return ""
@@ -132,3 +134,21 @@ def background_agent_worker(request: ExecuteRequest, session: dict, workspace: W
         
     except Exception as e:
         print(f"🔥 FATAL ERROR: {str(e)}")
+
+def slack_autopilot_worker(ticket_id: str, description: str, session: dict, workspace: WorkspaceManager):
+    try:
+        # Step 1: Prep the Context
+        jira_context = f"Description: {description}"
+        repo_tree = workspace.get_repo_tree()
+        
+        # Step 2: The Architect Phase (No human review)
+        plan_data = generate_architect_plan(ticket_id, jira_context, repo_tree)
+        
+        # Step 3: The Handoff
+        execute_request = ExecuteRequest(ticket_id=ticket_id, plan=plan_data, async_mode=True)
+        
+        # Step 4: The Developer Phase
+        background_agent_worker(execute_request, session, workspace)
+        
+    except Exception as e:
+        print(f"🔥 Slack Autopilot Error: {str(e)}")
