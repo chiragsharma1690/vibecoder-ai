@@ -10,8 +10,10 @@ from app.services.pipeline import background_agent_worker, run_multi_agent_loop
 router = APIRouter(prefix="/api/chat", tags=["Agent Chat"])
 
 @router.post("/plan")
-async def generate_plan(request: PlanRequest, session: dict = Depends(get_current_session)):
-    workspace = WorkspaceManager(session["repo_url"], session["github_token"])
+def generate_plan(request: PlanRequest, session: dict = Depends(get_current_session)):
+
+    workspace = WorkspaceManager(session["repo_url"], session["github_token"], session_id=session.get("session_id", "default"))
+    
     jira_client = JIRA(server=session["jira_url"], basic_auth=(session["jira_user"], session["jira_token"]))
     issue = jira_client.issue(request.ticket_id)
     
@@ -21,8 +23,9 @@ async def generate_plan(request: PlanRequest, session: dict = Depends(get_curren
     return {"status": "success", "ticket_id": request.ticket_id, "plan": plan_data, "is_revision": bool(request.feedback)}
 
 @router.post("/execute")
-async def execute_plan(request: ExecuteRequest, background_tasks: BackgroundTasks, session: dict = Depends(get_current_session)):
-    workspace = WorkspaceManager(session["repo_url"], session["github_token"])
+def execute_plan(request: ExecuteRequest, background_tasks: BackgroundTasks, session: dict = Depends(get_current_session)):
+
+    workspace = WorkspaceManager(session["repo_url"], session["github_token"], session_id=session.get("session_id", "default"))
 
     if request.async_mode:
         background_tasks.add_task(background_agent_worker, request, session, workspace)
@@ -37,8 +40,9 @@ async def execute_plan(request: ExecuteRequest, background_tasks: BackgroundTask
             raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/push")
-async def push_code(request: PushRequest, session: dict = Depends(get_current_session)):
-    workspace = WorkspaceManager(session["repo_url"], session["github_token"])
+def push_code(request: PushRequest, session: dict = Depends(get_current_session)):
+
+    workspace = WorkspaceManager(session["repo_url"], session["github_token"], session_id=session.get("session_id", "default"))
     
     branch_name = workspace.run_git_command("branch", "--show-current").stdout.strip()
     workspace.run_git_command("add", ".")

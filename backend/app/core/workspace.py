@@ -139,7 +139,13 @@ class WorkspaceManager:
         while (time.time() - start_time) < timeout_seconds:
             try:
                 response = requests.get(f"{base_api_url}?branch={branch_name}", headers=headers)
-                if response.status_code != 200: return {"success": True, "logs": ""}
+                
+                if response.status_code in [401, 403, 429]:
+                    return {"success": False, "logs": f"GitHub API Error ({response.status_code}): Rate limited or unauthorized."}
+                elif response.status_code != 200:
+                    time.sleep(15)
+                    continue
+
                 runs = response.json().get("workflow_runs", [])
                 if not runs:
                     time.sleep(15)
@@ -156,14 +162,21 @@ class WorkspaceManager:
                         print("❌ GitHub Actions CI Failed! Fetching logs...")
                         jobs_response = requests.get(latest_run.get("jobs_url"), headers=headers).json()
                         failed_logs = f"Remote CI Pipeline Failed (Conclusion: {conclusion}).\n"
+                        
                         for job in jobs_response.get("jobs", []):
                             if job.get("conclusion") == "failure":
                                 failed_logs += f"\nFailed Job: {job.get('name')}\n"
                                 for step in job.get("steps", []):
-                                    if step.get("conclusion") == "failure": failed_logs += f"Failed Step: {step.get('name')}\n"
+                                    if step.get("conclusion") == "failure": 
+                                        failed_logs += f"Failed Step: {step.get('name')}\n"
                         return {"success": False, "logs": failed_logs}
                 
                 time.sleep(15)
+                
+            except requests.exceptions.RequestException as e:
+                print(f"⚠️ Network error while checking CI: {e}. Retrying...")
+                time.sleep(15)
             except Exception as e:
-                return {"success": True, "logs": ""}
-        return {"success": True, "logs": "Timeout"}
+                return {"success": False, "logs": f"Internal Agent Error while checking CI: {str(e)}"}
+                
+        return {"success": False, "logs": f"CI Pipeline timed out after {timeout_seconds} seconds."}
