@@ -9,12 +9,12 @@ from urllib.parse import urlparse
 from app.constants.core import DEFAULT_WORKSPACE_DIR, IGNORE_DIRS, DEFAULT_GITIGNORE_RULES, DEFAULT_BASE_BRANCH
 
 class WorkspaceManager:
-    def __init__(self, repo_url: str, github_token: str, base_dir: str = DEFAULT_WORKSPACE_DIR):
+    def __init__(self, repo_url: str, github_token: str, base_dir: str = DEFAULT_WORKSPACE_DIR, session_id: str = "default"):
         self.repo_url = repo_url
         self.github_token = github_token
         self.base_dir = os.path.abspath(base_dir)
         self.repo_name = urlparse(self.repo_url).path.strip("/").split("/")[-1].replace(".git", "")
-        self.repo_path = os.path.join(self.base_dir, self.repo_name)
+        self.repo_path = os.path.join(self.base_dir, f"{self.repo_name}_{session_id}")
 
     def _get_auth_url(self) -> str:
         url = self.repo_url if self.repo_url.endswith(".git") else self.repo_url + ".git"
