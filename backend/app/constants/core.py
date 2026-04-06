@@ -9,10 +9,32 @@ LLM_CONTEXT_WINDOW = 8192
 DEFAULT_WORKSPACE_DIR = "workspaces"
 DEFAULT_BASE_BRANCH = "main"
 
-# Directories to ignore during repository tree traversal
+# --- Comprehensive Ignore Directories for Multi-Language Support ---
 IGNORE_DIRS = {
-    '.git', 'node_modules', '__pycache__', 'dist', 'build', 
-    '.venv', '.agent', '.idea', '.vscode'
+    '.git', '.svn', '.hg', '.idea', '.vscode', '.vs', '.settings', '.agent',
+    '__pycache__', '.venv', 'venv', 'env', '.tox', '.pytest_cache', 'eggs',
+    'node_modules', 'bower_components', '.next', '.nuxt', '.svelte-kit', 'out',
+    'target', 'build', '.gradle', '.m2', 'out', 'classes',
+    'bin', 'obj', 'TestResults',
+    'vendor',
+    'target',
+    '.bundle', 'vendor/bundle',
+    'vendor',
+    'Pods', 'build', 'DerivedData', 'CMakeFiles',
+    'dist', 'build', 'public/build', 'release', 'debug'
+}
+
+# --- Comprehensive Ignore Extensions ---
+IGNORE_EXTENSIONS = {
+    '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp', '.bmp', '.tiff',
+    '.mp4', '.mp3', '.wav', '.mov', '.avi', '.flv', '.ogg',
+    '.woff', '.woff2', '.ttf', '.eot', '.otf',
+    '.zip', '.tar', '.gz', '.rar', '.7z', '.bz2', '.jar', '.war', '.ear',
+    '.exe', '.dll', '.so', '.dylib', '.class', '.o', '.obj', '.pyc', '.pyo', 
+    '.pyd', '.beam', '.a', '.lib',
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.sqlite', '.db', '.sqlite3',
+    '.min.js', '.min.css', '.map',
+    '.DS_Store', 'Thumbs.db'
 }
 
 # Default rules to write into a missing .gitignore file

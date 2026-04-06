@@ -7,7 +7,7 @@ from app.core.dependencies import get_current_session
 router = APIRouter(prefix="/api/jira", tags=["Jira"])
 
 @router.post("/create")
-async def create_jira_ticket(request: CreateTicketRequest, session: dict = Depends(get_current_session)):
+def create_jira_ticket(request: CreateTicketRequest, session: dict = Depends(get_current_session)):
     project_key = session.get("jira_project_key")
     if not project_key:
         raise HTTPException(status_code=400, detail="Jira Project Key is missing from session.")

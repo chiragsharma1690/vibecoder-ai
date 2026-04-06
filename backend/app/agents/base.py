@@ -1,4 +1,5 @@
 import os
+import json
 import ollama
 import concurrent.futures
 from app.core.config import DEFAULT_LLM_MODEL, LLM_TIMEOUT_SECONDS
@@ -15,7 +16,7 @@ def call_llm(prompt: str, format_type=None, temperature=LLM_TEMPERATURE, model=D
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             response = executor.submit(_generate).result(timeout=timeout) 
             
-        raw = response.get("response", "").strip()
+        raw = response.get("response", "").strip()        
         if raw.startswith("```"): 
             raw = "\n".join(raw.split("\n")[1:-1]).strip()
             
@@ -28,43 +29,32 @@ def call_llm(prompt: str, format_type=None, temperature=LLM_TEMPERATURE, model=D
 
 def extract_and_save_files(raw_text: str, repo_path: str, saved_files: list):
     """
-    Parses the custom `---FILE: path---` delimiting format.
-    Includes critical protections against Path Traversal vulnerabilities and partial generations.
+    Parses a strict JSON array of file objects.
+    Expected format: [{"filepath": "src/main.py", "content": "..."}]
     """
-    if "---FILE:" not in raw_text: 
-        return
+    try:
+        files_data = json.loads(raw_text)
+    except json.JSONDecodeError:
+        raise ValueError(f"LLM generation failed: Output was not valid JSON.\nRaw Output: {raw_text[:100]}...")
+
+    if not isinstance(files_data, list):
+        raise ValueError("LLM generation failed: Expected a JSON array of file objects.")
+
+    for file_obj in files_data:
+        raw_path = file_obj.get("filepath", "").strip()
+        content = file_obj.get("content", "")
         
-    parts = raw_text.split("---FILE:")
-    for part in parts[1:]:
-        if not part.strip(): continue
+        if not raw_path: 
+            continue
         
-        # Guard: Ensure the model actually finished writing the file
-        if "---END---" not in part:
-            raise ValueError("LLM generation was truncated before completion. Try writing more concise code or increase max tokens.")
-            
-        raw_path = part.split("---")[0].strip().strip("`'\" \n")
-        content = part.split("---")[1].split("---END---")[0].strip()
-        
-        # Guard: Path Traversal Security check
-        # Resolves relative paths (like `../`) and asserts they remain strictly inside the target repo
         full_path = os.path.abspath(os.path.join(repo_path, raw_path))
         repo_abs_path = os.path.abspath(repo_path)
-        
         if not full_path.startswith(repo_abs_path):
             raise ValueError(f"Security Alert: Agent attempted Path Traversal outside workspace directory: {raw_path}")
             
-        # Strip rogue markdown wrappers that corrupt source code compilation
-        if content.startswith("```"):
-            first_newline_idx = content.find("\n")
-            if first_newline_idx != -1:
-                content = content[first_newline_idx+1:]
-        if content.endswith("```"):
-            content = content[:-3].strip()
-        
-        # Write to disk safely
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         with open(full_path, "w", encoding="utf-8") as f: 
-            f.write(content.strip() + "\n")
+            f.write(content.rstrip() + "\n") 
             
         if raw_path not in saved_files: 
             saved_files.append(raw_path)

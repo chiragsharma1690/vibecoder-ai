@@ -16,14 +16,21 @@ def run_devops_agent(repo_tree: str, repo_path: str):
     3. The workflow MUST trigger on `push` to branches matching `feature/*`.
     4. The workflow MUST include steps to checkout code, setup runtime, install dependencies, and run tests.
     
-    Respond EXACTLY in this format. DO NOT use markdown code blocks (```) inside the file content.
-    ---FILE: .github/workflows/vibe-ci.yml---
-    name: VibeCoder CI Feedback
-    # ... your dynamically generated yaml here ...
-    ---END---
+    CRITICAL INSTRUCTION:
+    You MUST output your response as a strict JSON array containing the workflow file.
+    DO NOT wrap the JSON in markdown blocks. Just return the raw JSON array.
+    
+    Exact Schema Required:
+    [
+      {{
+        "filepath": ".github/workflows/vibe-ci.yml",
+        "content": "yaml content here..."
+      }}
+    ]
     """
     
-    raw_response = call_llm(devops_prompt)
+    # Request JSON format natively from Ollama
+    raw_response = call_llm(devops_prompt, format_type="json")
     saved_files = []
     extract_and_save_files(raw_response, repo_path, saved_files)
     

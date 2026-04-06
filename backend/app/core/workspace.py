@@ -4,17 +4,19 @@ import subprocess
 import uuid
 import requests
 import time
+import pathspec
 from urllib.parse import urlparse
 
-from app.constants.core import DEFAULT_WORKSPACE_DIR, IGNORE_DIRS, DEFAULT_GITIGNORE_RULES, DEFAULT_BASE_BRANCH
+from app.constants.core import DEFAULT_WORKSPACE_DIR, IGNORE_DIRS, DEFAULT_GITIGNORE_RULES, DEFAULT_BASE_BRANCH, IGNORE_EXTENSIONS
 
 class WorkspaceManager:
-    def __init__(self, repo_url: str, github_token: str, base_dir: str = DEFAULT_WORKSPACE_DIR):
+
+    def __init__(self, repo_url: str, github_token: str, base_dir: str = DEFAULT_WORKSPACE_DIR, session_id: str = "default"):
         self.repo_url = repo_url
         self.github_token = github_token
         self.base_dir = os.path.abspath(base_dir)
         self.repo_name = urlparse(self.repo_url).path.strip("/").split("/")[-1].replace(".git", "")
-        self.repo_path = os.path.join(self.base_dir, self.repo_name)
+        self.repo_path = os.path.join(self.base_dir, f"{self.repo_name}_{session_id}")
 
     def _get_auth_url(self) -> str:
         url = self.repo_url if self.repo_url.endswith(".git") else self.repo_url + ".git"
@@ -41,21 +43,60 @@ class WorkspaceManager:
         print(f"💻 Git: {' '.join(cmd).replace(self.github_token, '***')}")
         return subprocess.run(cmd, cwd=self.repo_path if os.path.exists(self.repo_path) else None, check=check, capture_output=True, text=True)
 
-    def get_repo_tree(self, max_lines=200, max_depth=3):
+    def get_repo_tree(self, max_lines=300, max_depth=4) -> str:
+        """
+        Generates a highly optimized repository tree representation for the LLM.
+        Respects .gitignore rules and filters out non-code assets.
+        """
         tree = []
+        gitignore_path = os.path.join(self.repo_path, ".gitignore")
+        
+        ignore_lines = list(IGNORE_DIRS)
+        if os.path.exists(gitignore_path):
+            with open(gitignore_path, "r", encoding="utf-8") as f:
+                ignore_lines.extend(f.read().splitlines())
+                
+        spec = pathspec.PathSpec.from_lines('gitwildmatch', ignore_lines)
+
         for root, dirs, files in os.walk(self.repo_path):
-            dirs[:] = [d for d in dirs if d not in IGNORE_DIRS and not d.startswith('.')]
+            rel_root = os.path.relpath(root, self.repo_path)
+            if rel_root == ".":
+                rel_root = ""
+
+            dirs[:] = [
+                d for d in dirs 
+                if not d.startswith('.') 
+                and not spec.match_file(os.path.join(rel_root, d) + "/")
+            ]
+
             level = root.replace(self.repo_path, "").count(os.sep)
             if level > max_depth:
-                dirs[:] = [] 
+                dirs[:] = []
                 continue
+
             indent = " " * 4 * level
             tree.append(f"{indent}." if root == self.repo_path else f"{indent}{os.path.basename(root)}/")
-            for f in files: 
-                if not f.endswith(('.pyc', '.log', '.lock')): tree.append(f"{' ' * 4 * (level + 1)}{f}")
+
+            valid_files = []
+            for f in files:
+                rel_file_path = os.path.join(rel_root, f)
+                _, ext = os.path.splitext(f)
+                
+                if (
+                    not f.startswith('.') 
+                    and not f.endswith(('.pyc', '.log', '.lock'))
+                    and ext.lower() not in IGNORE_EXTENSIONS
+                    and not spec.match_file(rel_file_path)
+                ):
+                    valid_files.append(f)
+
+            for f in sorted(valid_files): 
+                tree.append(f"{' ' * 4 * (level + 1)}{f}")
+
             if len(tree) >= max_lines:
-                tree.append(f"{' ' * 4 * level}... (Truncated)")
+                tree.append(f"{' ' * 4 * level}... (Truncated to {max_lines} lines to save context)")
                 break
+
         return "\n".join(tree[:max_lines + 1])
 
     def get_available_branches(self):
@@ -139,7 +180,13 @@ class WorkspaceManager:
         while (time.time() - start_time) < timeout_seconds:
             try:
                 response = requests.get(f"{base_api_url}?branch={branch_name}", headers=headers)
-                if response.status_code != 200: return {"success": True, "logs": ""}
+                
+                if response.status_code in [401, 403, 429]:
+                    return {"success": False, "logs": f"GitHub API Error ({response.status_code}): Rate limited or unauthorized."}
+                elif response.status_code != 200:
+                    time.sleep(15)
+                    continue
+
                 runs = response.json().get("workflow_runs", [])
                 if not runs:
                     time.sleep(15)
@@ -156,14 +203,21 @@ class WorkspaceManager:
                         print("❌ GitHub Actions CI Failed! Fetching logs...")
                         jobs_response = requests.get(latest_run.get("jobs_url"), headers=headers).json()
                         failed_logs = f"Remote CI Pipeline Failed (Conclusion: {conclusion}).\n"
+                        
                         for job in jobs_response.get("jobs", []):
                             if job.get("conclusion") == "failure":
                                 failed_logs += f"\nFailed Job: {job.get('name')}\n"
                                 for step in job.get("steps", []):
-                                    if step.get("conclusion") == "failure": failed_logs += f"Failed Step: {step.get('name')}\n"
+                                    if step.get("conclusion") == "failure": 
+                                        failed_logs += f"Failed Step: {step.get('name')}\n"
                         return {"success": False, "logs": failed_logs}
                 
                 time.sleep(15)
+                
+            except requests.exceptions.RequestException as e:
+                print(f"⚠️ Network error while checking CI: {e}. Retrying...")
+                time.sleep(15)
             except Exception as e:
-                return {"success": True, "logs": ""}
-        return {"success": True, "logs": "Timeout"}
+                return {"success": False, "logs": f"Internal Agent Error while checking CI: {str(e)}"}
+                
+        return {"success": False, "logs": f"CI Pipeline timed out after {timeout_seconds} seconds."}
