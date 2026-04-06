@@ -16,16 +16,17 @@ def generate_architect_plan(ticket_id: str, jira_context: str, repo_tree: str, f
         "strategy": "Detailed explanation of the solution.", 
         "files_to_modify": ["path/to/existing_file.ext"], 
         "new_files": ["path/to/new_file.ext"], 
-        "commands_to_run": ["npm install package_name"], 
-        "ui_components_to_screenshot": [{"route": "/path", "selector": "#id"}]
+        "commands_to_run": ["<shell command>"]
     }
     
     CRITICAL RULES FOR PROJECT SETUP:
-    1. NEVER use interactive commands. You MUST use unattended/silent flags.
-    2. Be EXHAUSTIVE. Explicitly list EVERY necessary configuration file.
-    3. If dependencies are needed, provide REAL package manager commands.
-    4. Provide EXACT file paths.
-    5. DIRECTORY MATCHING: You MUST inspect the CURRENT REPOSITORY STRUCTURE. Place new files inside EXISTING folders.
+    1. NEVER use interactive commands. You MUST use unattended flags (e.g., -y, --yes, --silent). For npx, use `npx --yes`.
+    2. FOLDERS: You MUST use `mkdir -p` (e.g., `mkdir -p src/components`) to prevent missing parent directory errors.
+    3. INITIALIZATION: If this is a blank project, ensure you initialize it first (e.g., `npm init -y`) before installing packages.
+    4. Be EXHAUSTIVE. Explicitly list EVERY necessary configuration file.
+    5. Provide EXACT file paths.
+    6. DIRECTORY MATCHING: Inspect the CURRENT REPOSITORY STRUCTURE. Place new files inside EXISTING folders where applicable.
+    7. TECH STACK AWARENESS: Analyze the repository tree to determine the correct language and package manager.
     """
     print("🧠 Architect Agent is planning...")
     return json.loads(call_llm(prompt, format_type="json"))

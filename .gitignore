@@ -29,4 +29,4 @@ __pycache__
 package-lock.json
 .vite
 *.lock
-*.db
+*.db*
