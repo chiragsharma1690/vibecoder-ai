@@ -28,7 +28,7 @@ async def health_check():
 @app.post("/api/connect")
 async def connect_workspace(request: ConnectRequest):
     """
-    STEP 1: Validates external credentials, initializes the workspace manager, 
+    Validates external credentials, initializes the workspace manager, 
     clones the repository, and saves the session data locally.
     """
     # Validate Jira
@@ -67,7 +67,7 @@ async def connect_workspace(request: ConnectRequest):
 
 @app.post("/api/set-branch")
 async def set_base_branch(request: SetBranchRequest):
-    """STEP 2: Allows the user to select the foundational Git branch for operations."""
+    """Allows the user to select the foundational Git branch for operations."""
     session = load_session()
     workspace = WorkspaceManager(session["repo_url"], session["github_token"])
     
@@ -89,7 +89,23 @@ async def generate_plan(request: PlanRequest):
     session = load_session()
     workspace = WorkspaceManager(session["repo_url"], session["github_token"])
     
-    plan_data = generate_architect_plan(request, session, workspace)
+    try:
+        jira_client = JIRA(server=session["jira_url"], basic_auth=(session["jira_user"], session["jira_token"]))
+        issue = jira_client.issue(request.ticket_id)
+        jira_context = f"Summary: {issue.fields.summary}\nDescription: {issue.fields.description}"
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch Jira ticket {request.ticket_id}: {str(e)}")
+    
+    try:
+        plan_data = generate_architect_plan(
+            ticket_id=request.ticket_id,
+            jira_context=jira_context,
+            repo_tree=workspace.get_repo_tree(),
+            feedback=request.feedback,
+            previous_plan=request.previous_plan
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Architect Agent Failed: {str(e)}")
     
     return {
         "status": "success", 

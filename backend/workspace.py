@@ -74,7 +74,7 @@ class WorkspaceManager:
         ignore_dirs = {'.git', 'node_modules', '__pycache__', 'dist', 'build', '.venv', '.agent', '.idea', '.vscode'}
         tree = []
         for root, dirs, files in os.walk(self.repo_path):
-            # Prune ignored directories and hidden folders immediately to save processing time
+            # Prune ignored directories immediately
             dirs[:] = [d for d in dirs if d not in ignore_dirs and not d.startswith('.')]
             
             level = root.replace(self.repo_path, "").count(os.sep)
@@ -85,10 +85,14 @@ class WorkspaceManager:
                 continue
                 
             indent = " " * 4 * level
-            tree.append(f"{indent}{os.path.basename(root)}/")
             
+            # Render the root folder as '.' instead of the literal repo name
+            if root == self.repo_path:
+                tree.append(f"{indent}.")
+            else:
+                tree.append(f"{indent}{os.path.basename(root)}/")
+                
             for f in files: 
-                # Ignore noisy compiled files or logs
                 if not f.endswith(('.pyc', '.log', '.lock')):
                     tree.append(f"{' ' * 4 * (level + 1)}{f}")
                     
